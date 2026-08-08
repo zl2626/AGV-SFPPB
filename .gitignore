@@ -1,0 +1,7 @@
+# MATLAB autosave / cache
+*.asv
+slprj/
+
+# Windows
+Thumbs.db
+Desktop.ini
