@@ -78,18 +78,28 @@ if t < T_y
     angle_y = pi*t/(2*T_y);
     kappa_y = kappa0_y + (kappaT_y - kappa0_y)*sin(angle_y);
     shift_y = 1 - sin(angle_y);
+    kappa_dot_y = (kappaT_y - kappa0_y) ...
+        * cos(angle_y)*pi/(2*T_y);
+    shift_dot_y = -cos(angle_y)*pi/(2*T_y);
 else
     kappa_y = kappaT_y;
     shift_y = 0;
+    kappa_dot_y = 0;
+    shift_dot_y = 0;
 end
 
 if t < T_phi
     angle_phi = pi*t/(2*T_phi);
     kappa_phi = kappa0_phi + (kappaT_phi - kappa0_phi)*sin(angle_phi);
     shift_phi = 1 - sin(angle_phi);
+    kappa_dot_phi = (kappaT_phi - kappa0_phi) ...
+        * cos(angle_phi)*pi/(2*T_phi);
+    shift_dot_phi = -cos(angle_phi)*pi/(2*T_phi);
 else
     kappa_phi = kappaT_phi;
     shift_phi = 0;
+    kappa_dot_phi = 0;
+    shift_dot_phi = 0;
 end
 
 % Horizontal error: e0_y < 0.
@@ -118,6 +128,24 @@ else
         + lambda2_phi*tanh(eta_phi);
 end
 
+% Nominal SFPPB boundary derivatives; flexible eta-dot terms are
+% temporarily treated as an unknown disturbance for the Identifier.
+if e0_y < 0
+    B_lower_dot_y = -kappa_dot_y + e0_y*shift_dot_y;
+    B_upper_dot_y = eta_shape_y*kappa_dot_y + e0_y*shift_dot_y;
+else
+    B_lower_dot_y = -eta_shape_y*kappa_dot_y + e0_y*shift_dot_y;
+    B_upper_dot_y = kappa_dot_y + e0_y*shift_dot_y;
+end
+
+if e0_phi < 0
+    B_lower_dot_phi = -kappa_dot_phi + e0_phi*shift_dot_phi;
+    B_upper_dot_phi = eta_shape_phi*kappa_dot_phi + e0_phi*shift_dot_phi;
+else
+    B_lower_dot_phi = -eta_shape_phi*kappa_dot_phi + e0_phi*shift_dot_phi;
+    B_upper_dot_phi = kappa_dot_phi + e0_phi*shift_dot_phi;
+end
+
 % Nominal SPPB without the flexible relaxation, for diagnostics only.
 nominal_lower_y = B_lower_y + lambda1_y*tanh(eta_y);
 nominal_upper_y = B_upper_y - lambda2_y*tanh(eta_y);
@@ -144,11 +172,11 @@ s1phi = 1.5*z1_phi + k1phi*z1phi_int;
 s1 = [s1y; s1phi];
 
 sigma_ni = diag([sigma_y_ni, sigma_phi_ni]);
-TT_y = B_upper_y/(B_upper_y - e_y) ...
-    + B_lower_y/(e_y - B_lower_y);
-TT_phi = B_upper_phi/(B_upper_phi - e_phi) ...
-    + B_lower_phi/(e_phi - B_lower_phi);
-T = [0.01*TT_y; 0.01*TT_phi];
+Gamma_y = B_upper_dot_y/(B_upper_y - e_y) ...
+    + B_lower_dot_y/(e_y - B_lower_y);
+Gamma_phi = B_upper_dot_phi/(B_upper_phi - e_phi) ...
+    + B_lower_dot_phi/(e_phi - B_lower_phi);
+Gamma = [Gamma_y; Gamma_phi];
 z1 = [z1_y; z1_phi];
 K1 = diag([k1y, k1phi]);
 C1 = diag([c1y, c1phi]);
@@ -159,7 +187,7 @@ denom_1 = sqrt(s1'*s1*norm(theta_1,2)^2 + rho_1^2);
 eta_1 = (s1*norm(theta_1,2)^2)/denom_1;
 
 % 保留原有虚拟控制/反步第一层，暂时去掉 w 对 alpha_1 的直接作用。
-alpha_1 = sigma_ni*(-C1*s1 + T - K1*z1);
+alpha_1 = sigma_ni*(-C1*s1 + Gamma - K1*z1);
 z2 = X2 - alpha_1;
 z2_y = z2(1);
 z2_phi = z2(2);
@@ -232,18 +260,28 @@ if t < T_y
     angle_y = pi*t/(2*T_y);
     kappa_y = kappa0_y + (kappaT_y - kappa0_y)*sin(angle_y);
     shift_y = 1 - sin(angle_y);
+    kappa_dot_y = (kappaT_y - kappa0_y) ...
+        * cos(angle_y)*pi/(2*T_y);
+    shift_dot_y = -cos(angle_y)*pi/(2*T_y);
 else
     kappa_y = kappaT_y;
     shift_y = 0;
+    kappa_dot_y = 0;
+    shift_dot_y = 0;
 end
 
 if t < T_phi
     angle_phi = pi*t/(2*T_phi);
     kappa_phi = kappa0_phi + (kappaT_phi - kappa0_phi)*sin(angle_phi);
     shift_phi = 1 - sin(angle_phi);
+    kappa_dot_phi = (kappaT_phi - kappa0_phi) ...
+        * cos(angle_phi)*pi/(2*T_phi);
+    shift_dot_phi = -cos(angle_phi)*pi/(2*T_phi);
 else
     kappa_phi = kappaT_phi;
     shift_phi = 0;
+    kappa_dot_phi = 0;
+    shift_dot_phi = 0;
 end
 
 if e0_y < 0
@@ -268,6 +306,24 @@ else
         - lambda1_phi*tanh(eta_phi);
     B_upper_phi = kappa_phi + e0_phi*shift_phi ...
         + lambda2_phi*tanh(eta_phi);
+end
+
+% Nominal SFPPB boundary derivatives; flexible eta-dot terms are
+% temporarily treated as an unknown disturbance for the Identifier.
+if e0_y < 0
+    B_lower_dot_y = -kappa_dot_y + e0_y*shift_dot_y;
+    B_upper_dot_y = eta_shape_y*kappa_dot_y + e0_y*shift_dot_y;
+else
+    B_lower_dot_y = -eta_shape_y*kappa_dot_y + e0_y*shift_dot_y;
+    B_upper_dot_y = kappa_dot_y + e0_y*shift_dot_y;
+end
+
+if e0_phi < 0
+    B_lower_dot_phi = -kappa_dot_phi + e0_phi*shift_dot_phi;
+    B_upper_dot_phi = eta_shape_phi*kappa_dot_phi + e0_phi*shift_dot_phi;
+else
+    B_lower_dot_phi = -eta_shape_phi*kappa_dot_phi + e0_phi*shift_dot_phi;
+    B_upper_dot_phi = kappa_dot_phi + e0_phi*shift_dot_phi;
 end
 
 nominal_lower_y = B_lower_y + lambda1_y*tanh(eta_y);
@@ -295,11 +351,11 @@ s1phi = 1.5*z1_phi + k1phi*z1phi_int;
 s1 = [s1y; s1phi];
 
 sigma_ni = diag([sigma_y_ni, sigma_phi_ni]);
-TT_y = B_upper_y/(B_upper_y - e_y) ...
-    + B_lower_y/(e_y - B_lower_y);
-TT_phi = B_upper_phi/(B_upper_phi - e_phi) ...
-    + B_lower_phi/(e_phi - B_lower_phi);
-T = [0.01*TT_y; 0.01*TT_phi];
+Gamma_y = B_upper_dot_y/(B_upper_y - e_y) ...
+    + B_lower_dot_y/(e_y - B_lower_y);
+Gamma_phi = B_upper_dot_phi/(B_upper_phi - e_phi) ...
+    + B_lower_dot_phi/(e_phi - B_lower_phi);
+Gamma = [Gamma_y; Gamma_phi];
 z1 = [z1_y; z1_phi];
 K1 = diag([k1y, k1phi]);
 C1 = diag([c1y, c1phi]);
@@ -310,7 +366,7 @@ denom_1 = sqrt(s1'*s1*norm(theta_1,2)^2 + rho_1^2);
 eta_1 = (s1*norm(theta_1,2)^2)/denom_1;
 
 % 暂时去掉 w 对 alpha_1 的直接作用，保留 w 状态和输出接口。
-alpha_1 = sigma_ni*(-C1*s1 + T - K1*z1);
+alpha_1 = sigma_ni*(-C1*s1 + Gamma - K1*z1);
 z2 = X2 - alpha_1;
 z2_y = z2(1);
 z2_phi = z2(2);
