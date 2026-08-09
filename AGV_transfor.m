@@ -187,7 +187,11 @@ denom_1 = sqrt(s1'*s1*norm(theta_1,2)^2 + rho_1^2);
 eta_1 = (s1*norm(theta_1,2)^2)/denom_1;
 
 % 保留原有虚拟控制/反步第一层，暂时去掉 w 对 alpha_1 的直接作用。
-alpha_1 = sigma_ni*(-C1*s1 + Gamma - K1*z1);
+% s1 中 z1 的系数
+D1 = diag([2, 1.5]);
+
+% 与 s1 定义一致的虚拟控制律
+alpha_1 = sigma_ni*(D1\(-C1*s1 + D1*Gamma - K1*z1));
 z2 = X2 - alpha_1;
 z2_y = z2(1);
 z2_phi = z2(2);
@@ -366,7 +370,11 @@ denom_1 = sqrt(s1'*s1*norm(theta_1,2)^2 + rho_1^2);
 eta_1 = (s1*norm(theta_1,2)^2)/denom_1;
 
 % 暂时去掉 w 对 alpha_1 的直接作用，保留 w 状态和输出接口。
-alpha_1 = sigma_ni*(-C1*s1 + Gamma - K1*z1);
+% s1 中 z1 的系数
+D1 = diag([2, 1.5]);
+
+% 与 s1 定义一致的虚拟控制律
+alpha_1 = sigma_ni*(D1\(-C1*s1 + D1*Gamma - K1*z1));
 z2 = X2 - alpha_1;
 z2_y = z2(1);
 z2_phi = z2(2);
