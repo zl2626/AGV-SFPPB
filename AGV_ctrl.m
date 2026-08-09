@@ -1,152 +1,175 @@
 function [sys,x0,str,ts] = AGV_ctrl(t,x,u,flag)
-switch flag,
-case 0,
-    [sys,x0,str,ts]=mdlInitializeSizes;
-case 1,
-    sys=mdlDerivatives(t,x,u);
-case 3,
-    sys=mdlOutputs(t,x,u);
+switch flag
+case 0
+    [sys,x0,str,ts] = mdlInitializeSizes;
+case 1
+    sys = mdlDerivatives(t,x,u);
+case 3
+    sys = mdlOutputs(t,x,u);
 case {2,4,9}
-    sys=[];
+    sys = [];
 otherwise
     error(['Unhandled flag = ',num2str(flag)]);
 end
 
-function [sys,x0,str,ts]=mdlInitializeSizes
+function [sys,x0,str,ts] = mdlInitializeSizes
 sizes = simsizes;
-sizes.NumContStates  = 1;
+sizes.NumContStates  = 22;
 sizes.NumDiscStates  = 0;
 sizes.NumOutputs     = 3;
 sizes.NumInputs      = 13;
 sizes.DirFeedthrough = 1;
 sizes.NumSampleTimes = 1;
 sys = simsizes(sizes);
-x0 = 1;
+
+% [WF(1:7); Wc(1:7); Wa(1:7); O]
+WF0 = zeros(7,1);
+Wc0 = 0.1*ones(7,1);
+Wa0 = 0.1*ones(7,1);
+O0 = 0;
+x0 = [WF0; Wc0; Wa0; O0];
 str = [];
 ts = [0 0];
 
-function sys=mdlDerivatives(t,x,u)
-% 解包状态
-W = x(1);
+function sys = mdlDerivatives(t,x,u)
+% =========================================================
+% 1. NN weights and input-saturation auxiliary state
+% =========================================================
+WF = x(1:7);
+Wc = x(8:14);
+Wa = x(15:21);
+O = x(22);
 
-sigma_y = u(1); sigma_phi = u(4);
-s2y = u(2); s2phi = u(5);
-s1y = u(3); s1phi = u(6); 
-e_y = u(7); e_phi = u(8);
-X1 = [e_y; e_phi]; X2 = [u(9); u(10)];
-
-% 完整的s1和s2
-s1 = [s1y; s1phi];
-s2 = [s2y; s2phi];
-
-% RBFNN权重更新
-k = 1; r = 2;
-Z2 = [X1; X2];
-phi_y = AGV_RBF(Z2); 
-phi_phi = AGV_RBF(Z2);
-% fprintf('phi = [%.6f, %.6f]\n', phi_y, phi_phi);
-
-dW_dt = (1/(2*k^2)) * (s2'*s2) * (phi_y'*phi_y + phi_phi'*phi_phi) - r * W;
-
-% W_max = 100;
-% if W > W_max && dW_dt > 0
-%     dW_dt = -r * W;
-% elseif W < -W_max && dW_dt < 0
-%     dW_dt = -r * W;
-% end
-
-sys = dW_dt;
-
-function sys=mdlOutputs(t,x,u)
-% 解包状态
-W = x(1);
-% fprintf('W = %.6f\n', W);
-% 输入解包
-w = u(13);
-sigma_y = u(1); sigma_phi = u(4);
-s2y = u(2); s2phi = u(5);
-s1y = u(3); s1phi = u(6); 
-e_y = u(7); e_phi = u(8);
-X1 = [e_y; e_phi]; X2 = [u(9); u(10)];
+% =========================================================
+% 2. Signals from AGV_transfor.m
+% =========================================================
+% The 13-input interface is unchanged from the original Simulink model.
+s2y = u(2);
+s2phi = u(5);
+e_y = u(7);
+e_phi = u(8);
+de_y = u(9);
+de_phi = u(10);
 z2 = [u(11); u(12)];
-k2y = 0.1; k2phi = 0.5;
-k2 = diag([k2y, k2phi]);
 
-m = 1832; Iz = 2488; lf = 1.18;
-cf = 80000 * (1 + 0.1*sin(0.01*t));
+X1 = [e_y; e_phi];
+X2 = [de_y; de_phi];
+Z2 = [X1; X2];
 
-% 完整的信号
-s1 = [s1y; s1phi];
-s2 = [s2y; s2phi];
+% =========================================================
+% 3. Actual steering-input direction of the AGV
+% =========================================================
+m = 1832;
+Iz = 2488;
+lf = 1.18;
+cf = 80000*(1 + 0.1*sin(0.01*t));
 
-sigma = diag([sigma_y, sigma_phi]);
-
-% 控制器参数
-% c2y = 10; c2phi = 20;
-c2y = 2; c2phi = 5;
-k_nn = 0.1;
-rho_val = 10 * exp(-0.02*t);
-
-C2 = diag([c2y, c2phi]);
-
-% 计算theta_2和eta_2
-u_d = 0.5;
 c_y = cf/m;
 c_phi = lf*cf/Iz;
-c_min = [c_y* tanh(c_y/u_d); c_phi* tanh(c_phi/u_d)];
-theta_2 = diag([1/c_min, 1/c_min]);
-% fprintf('theta_2 = [%.6f, %.6f]\n', theta_2(1), theta_2(2));
+C = [c_y; c_phi];
+C_norm = norm(C);
 
-denom2 = sqrt(s2' * s2 * norm(theta_2, 2)^2 + rho_val^2);
-eta_2 = (s2 * norm(theta_2, 2)^2) / denom2;
+% =========================================================
+% 4. Seven-node RBF feature vector
+% =========================================================
+phi = AGV_RBF(Z2);
 
-% fprintf('eta_2 = [%.6f, %.6f]\n', eta_2(1), eta_2(2));
+% =========================================================
+% 5. Combined controllable error and Identifier
+% =========================================================
+% The two virtual errors are projected onto the single physical
+% steering direction; O compensates the input saturation mismatch.
+z2_control = C'*z2/C_norm - O;
 
-% RBFNN计算
+Gamma_F = 0.2;
+sigma_F = 2.0;
+dWF = Gamma_F*(z2_control*phi - sigma_F*WF);
+
+% =========================================================
+% 6. Critic
+% =========================================================
+gamma_c = 0.75;
+dWc = -gamma_c*phi*(phi'*Wc);
+
+% =========================================================
+% 7. Actor
+% =========================================================
+gamma_a = 1.0;
+actor_error = gamma_a*(Wa - Wc) + gamma_c*Wc;
+dWa = -phi*(phi'*actor_error);
+
+% =========================================================
+% 8. SFPPB-RL steering controller and O dynamics
+% =========================================================
+c2 = 30;
+F_hat = WF'*phi;
+actor_term = Wa'*phi;
+
+delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_norm;
+
+u_d = 0.5;
+k_delta = u_d*tanh(delta/u_d);
+dO = -O + (k_delta - delta);
+
+sys = [dWF; dWc; dWa; dO];
+
+function sys = mdlOutputs(t,x,u)
+% Keep the output calculation explicit and in the same order as the
+% derivative calculation.  The Simulink output interface stays 3-wide.
+
+% =========================================================
+% 1. NN weights and input-saturation auxiliary state
+% =========================================================
+Wc = x(8:14); %#ok<NASGU>
+Wa = x(15:21);
+O = x(22);
+
+% =========================================================
+% 2. Signals from AGV_transfor.m
+% =========================================================
+e_y = u(7);
+e_phi = u(8);
+de_y = u(9);
+de_phi = u(10);
+z2 = [u(11); u(12)];
+
+X1 = [e_y; e_phi];
+X2 = [de_y; de_phi];
 Z2 = [X1; X2];
-phi_y = AGV_RBF(Z2); 
-phi_phi = AGV_RBF(Z2);
 
-% 计算a2_hat
-nn_term = (1/(2*k_nn^2)) * s2 * W * (phi_y'*phi_y + phi_phi'*phi_phi);
-a2_hat = C2 * s2 + 0.5 * s2 + sigma * s1 + w * eta_2 + nn_term;
+% =========================================================
+% 3. Actual steering-input direction of the AGV
+% =========================================================
+m = 1832;
+Iz = 2488;
+lf = 1.18;
+cf = 80000*(1 + 0.1*sin(0.01*t));
 
-% 最终控制律
-I = [1; 1];
-numerator = -I' * s2 * (a2_hat' * a2_hat);
-denominator = sqrt(s2' * s2 * (a2_hat' * a2_hat) + rho_val^2);
-delta = numerator /denominator;
+c_y = cf/m;
+c_phi = lf*cf/Iz;
+C = [c_y; c_phi];
+C_norm = norm(C);
 
-% numerator = -s2' * a2_hat;
-% denominator = sqrt(s2' * s2 * (a2_hat' * a2_hat) + rho_val^2);
-% delta = 1 *numerator /(50 * denominator);
+% =========================================================
+% 4. RBF, combined error, and SFPPB-RL steering law
+% =========================================================
+phi = AGV_RBF(Z2);
+z2_control = C'*z2/C_norm - O;
 
-% numerator = -sqrt(s2' * s2) * (a2_hat' * a2_hat);
-% denominator = sqrt(s2' * s2 * (a2_hat' * a2_hat) + rho_val^2);
-% delta = numerator /denominator;
+WF = x(1:7);
+F_hat = WF'*phi;
+actor_term = Wa'*phi;
 
-% fprintf('=== 详细调试信息 t=%.3f ===\n', t);
-% fprintf('s1 = [%.6f, %.6f]\n', s1(1), s1(2));
-% fprintf('s2 = [%.6f, %.6f]\n', s2(1), s2(2));
-% fprintf('a2_hat = [%.6f, %.6f]\n', a2_hat(1), a2_hat(2));
-% fprintf('s2''*s2 = %.6f\n', s2'*s2);
-% fprintf('a2_hat''*a2_hat = %.6f\n', a2_hat'*a2_hat);
-% fprintf('s2''*s2 * a2_hat''*a2_hat = %.6f\n', s2'*s2 * (a2_hat'*a2_hat));
-% fprintf('rho_val = %.6f\n', rho_val);
-% fprintf('denominator = %.6f\n', denominator);
-% fprintf('numerator = %.6f\n', numerator);
-% fprintf('c_min = %.6f\n', c_min);
-% fprintf('delta计算: %.6f / (%.6f * %.6f) = ', numerator, c_min, denominator);
-% fprintf('delta = %.6f\n', delta);
+c2 = 30;
+delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_norm;
 
-% fprintf('e_y=%.4f, e_phi=%.4f, delta=%.6f\n', e_y, e_phi, delta);
+% Keep the hard actuator limit used by the vehicle model.
 u_d = 0.5;
 if abs(delta) > u_d
-    delta_sat = u_d * sign(delta);
+    delta_sat = u_d*sign(delta);
 else
     delta_sat = delta;
 end
-sys(1) = delta;
-sys(2) = delta_sat;
-sys(3)=W;
 
+% Third output is the Actor norm for observing weight growth.
+sys = [delta; delta_sat; norm(Wa)];

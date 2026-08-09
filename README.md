@@ -1,23 +1,62 @@
-# AGV_TFS
+# AGV-SFPPB
 
-AGV（自动导引车）横向运动控制仿真项目，基于 MATLAB / Simulink。
+基于 MATLAB/Simulink 的 AGV 横向控制复现工程。项目以原始 `AGV_TFS` 工程为基础，正在将控制器改造成“滑模柔性规定性能边界（SFPPB）+ 直接 Identifier–Critic–Actor 强化学习”的结构。
 
-控制方案：反步法（backstepping）+ 预设性能控制（PPC / 障碍李雅普诺夫函数 BLF）+ RBF 神经网络自适应补偿。
+> 当前版本属于“结构已经替换、正在稳定性调试”的中间版本。尚未声称完成 20 s 全程稳定仿真或完成论文级结果复现。
 
-## 文件说明
+## 当前完成情况
 
-| 文件 | 说明 |
-| --- | --- |
-| `AGV_plant.m` | 车辆横向动力学被控对象模型（Level-1 S-Function，含时变轮胎侧偏刚度与外部扰动） |
-| `AGV_transfor.m` | 误差变换与边界函数：性能函数、误差映射、虚拟控制律、PI 补偿 |
-| `AGV_ctrl.m` | 控制器：RBFNN 自适应、控制律、饱和处理 |
-| `AGV_RBF.m` | RBF 径向基函数计算 |
-| `AGV_plot.m` | 仿真结果绘图脚本（LaTeX 图注） |
-| `assist1.m` | 辅助 S-Function |
-| `AGV_simulate.slx` | Simulink 仿真模型 |
-| `Fig/`、`Fig2/` | 仿真结果图（.fig） |
+- 已建立独立工程目录 `AGV-SFPPB`，保留原 AGV 的 Level-1 S-Function 和 Simulink 端口结构。
+- 已修改 `AGV_transfor.m`：
+  - 加入 y 方向和航向角 phi 的 SFPPB 上下边界；
+  - 保留原有误差变换、滑模变量、虚拟控制量和输出端口顺序；
+  - 保留原车辆模型、RBF 网络和 Simulink 连接方式。
+- 已修改 `AGV_ctrl.m`：
+  - 改为 22 状态 Identifier–Critic–Actor 控制器；
+  - 状态划分为 `WF(1:7)`、`Wc(8:14)`、`Wa(15:21)` 和输入约束辅助状态 `O(22)`；
+  - 保留 13 输入、3 输出接口，并加入方向盘输入饱和映射。
+- 未修改 `AGV_plant.m`、`AGV_RBF.m`、`assist1.m`、`AGV_plot.m` 和 `AGV_simulate.slx` 的原有结构。
+
+## 已完成的检查
+
+- MATLAB S-Function 接口检查通过：`AGV_transfor` 为 5 状态、21 输出、6 输入；`AGV_ctrl` 为 22 状态、3 输出、13 输入。
+- 两个 S-Function 的直接调用可以正常返回有限数值。
+- t=0 时初始误差位于 SFPPB 边界内部，t=5 s 时边界能够收缩到设定终值。
+- MATLAB 静态检查未发现语法错误；目前仅有少量未使用输入/局部参数提示。
+- 原始 `AGV_TFS` 控制器作为基线可以完成 20 s 仿真；这说明原模型和原连接基本可运行。
+
+## 当前存在的问题
+
+当前 SFPPB-RL 控制器还没有通过 20 s 全程仿真。按当前参数运行时，Simulink 在约 **t=1.563 s** 附近出现非线性求解迭代不收敛并停止。停止前的主要现象为：
+
+- 航向误差 `e_phi` 接近 SFPPB 上边界：约 `0.03650`，上边界约 `0.03714`，剩余裕度约 `6.33e-4`；
+- 控制器输出的未饱和转角约达到 `49.38 rad`，而实际执行器被限制在 `±0.5 rad`；
+- 新的 RL 控制器与原 `AGV_transfor.m` 中的 `alpha1 / w / s2` 辅助动态之间还没有完成协调设计，输入约束、边界收缩和自适应状态的耦合会导致数值发散或求解器失败；
+- 因此，目前不能把该版本的结果表述为“已稳定跟踪”或“已完成论文复现”。
 
 ## 运行方式
 
-1. 在 MATLAB 中打开 `AGV_simulate.slx`，运行仿真；
-2. 仿真结束后运行 `AGV_plot.m` 绘制结果曲线。
+1. 在 MATLAB 中将本目录设置为当前文件夹。
+2. 打开并运行 `AGV_simulate.slx`。
+3. 仿真结束后运行 `AGV_plot.m` 绘制结果。
+
+当前版本预期会在约 1.563 s 处暴露上述稳定性问题；这属于待解决问题的复现实验，不是最终结果。
+
+## 下一步工作
+
+1. 先处理未饱和控制量与实际转角饱和之间的冲突，避免 `delta` 在边界附近形成过大的尖峰。
+2. 重新设计或解耦旧的 `w` 辅助动态与新 Identifier–Critic–Actor 更新律。
+3. 依次调节 `c2`、边界收缩速度、输入约束映射和学习率，并以 20 s 无求解器失败为最低验证条件。
+4. 完成与原始 `AGV_TFS` 的跟踪误差、控制输入和权重变化对比后，再整理论文级图表和结论。
+
+## 文件说明
+
+| 文件 | 作用 |
+| --- | --- |
+| `AGV_transfor.m` | SFPPB 边界、误差变换、滑模变量和辅助动态 |
+| `AGV_ctrl.m` | 22 状态 Identifier–Critic–Actor 控制器及输入约束映射 |
+| `AGV_plant.m` | AGV 横向动力学模型 |
+| `AGV_RBF.m` | RBF 基函数计算 |
+| `assist1.m` | 辅助 S-Function |
+| `AGV_simulate.slx` | Simulink 仿真模型 |
+| `AGV_plot.m` | 仿真结果绘图脚本 |
