@@ -65,8 +65,9 @@ C_norm = norm(C);
 phi = AGV_RBF(Z2);
 
 % Identifier
-% 将两个虚拟误差投影到实际转向方向，O 补偿输入饱和误差。
-z2_control = C'*z2/C_norm - O;
+% 加权投影诊断：提高 y 通道权重，检查二维误差抵消问题。
+P = diag([3, 1]);
+z2_control = C'*P*z2/sqrt(C'*P*C) - O;
 
 Gamma_F = 0.2;
 sigma_F = 2.0;
@@ -127,7 +128,8 @@ C_norm = norm(C);
 
 % RBFNN 与最终控制律
 phi = AGV_RBF(Z2);
-z2_control = C'*z2/C_norm - O;
+P = diag([3, 1]);
+z2_control = C'*P*z2/sqrt(C'*P*C) - O;
 
 F_hat = WF'*phi;
 actor_term = Wa'*phi;
