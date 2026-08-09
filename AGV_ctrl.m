@@ -32,20 +32,14 @@ str = [];
 ts = [0 0];
 
 function sys = mdlDerivatives(t,x,u)
-% =========================================================
-% 1. NN weights and input-saturation auxiliary state
-% =========================================================
+% 神经网络权重
 WF = x(1:7);
 Wc = x(8:14);
 Wa = x(15:21);
 O = x(22);
 
-% =========================================================
-% 2. Signals from AGV_transfor.m
-% =========================================================
-% The 13-input interface is unchanged from the original Simulink model.
-s2y = u(2);
-s2phi = u(5);
+% 输入信号
+% 保持原有 13 输入接口不变。
 e_y = u(7);
 e_phi = u(8);
 de_y = u(9);
@@ -56,9 +50,7 @@ X1 = [e_y; e_phi];
 X2 = [de_y; de_phi];
 Z2 = [X1; X2];
 
-% =========================================================
-% 3. Actual steering-input direction of the AGV
-% =========================================================
+% 车辆参数
 m = 1832;
 Iz = 2488;
 lf = 1.18;
@@ -69,38 +61,27 @@ c_phi = lf*cf/Iz;
 C = [c_y; c_phi];
 C_norm = norm(C);
 
-% =========================================================
-% 4. Seven-node RBF feature vector
-% =========================================================
+% RBFNN
 phi = AGV_RBF(Z2);
 
-% =========================================================
-% 5. Combined controllable error and Identifier
-% =========================================================
-% The two virtual errors are projected onto the single physical
-% steering direction; O compensates the input saturation mismatch.
+% Identifier
+% 将两个虚拟误差投影到实际转向方向，O 补偿输入饱和误差。
 z2_control = C'*z2/C_norm - O;
 
 Gamma_F = 0.2;
 sigma_F = 2.0;
 dWF = Gamma_F*(z2_control*phi - sigma_F*WF);
 
-% =========================================================
-% 6. Critic
-% =========================================================
+% Critic
 gamma_c = 0.75;
 dWc = -gamma_c*phi*(phi'*Wc);
 
-% =========================================================
-% 7. Actor
-% =========================================================
+% Actor
 gamma_a = 1.0;
 actor_error = gamma_a*(Wa - Wc) + gamma_c*Wc;
 dWa = -phi*(phi'*actor_error);
 
-% =========================================================
-% 8. SFPPB-RL steering controller and O dynamics
-% =========================================================
+% 最终控制律
 c2 = 30;
 F_hat = WF'*phi;
 actor_term = Wa'*phi;
@@ -109,24 +90,20 @@ delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_norm;
 
 u_d = 0.5;
 k_delta = u_d*tanh(delta/u_d);
-dO = -O + (k_delta - delta);
+dO = -O + C_norm*(k_delta - delta);
 
 sys = [dWF; dWc; dWa; dO];
 
 function sys = mdlOutputs(t,x,u)
-% Keep the output calculation explicit and in the same order as the
-% derivative calculation.  The Simulink output interface stays 3-wide.
+% 输出计算顺序与导数计算保持一致，Simulink 输出接口保持 3 路。
 
-% =========================================================
-% 1. NN weights and input-saturation auxiliary state
-% =========================================================
-Wc = x(8:14); %#ok<NASGU>
+% 神经网络权重
+WF = x(1:7);
+Wc = x(8:14);
 Wa = x(15:21);
 O = x(22);
 
-% =========================================================
-% 2. Signals from AGV_transfor.m
-% =========================================================
+% 输入信号
 e_y = u(7);
 e_phi = u(8);
 de_y = u(9);
@@ -137,9 +114,7 @@ X1 = [e_y; e_phi];
 X2 = [de_y; de_phi];
 Z2 = [X1; X2];
 
-% =========================================================
-% 3. Actual steering-input direction of the AGV
-% =========================================================
+% 车辆参数
 m = 1832;
 Iz = 2488;
 lf = 1.18;
@@ -150,13 +125,10 @@ c_phi = lf*cf/Iz;
 C = [c_y; c_phi];
 C_norm = norm(C);
 
-% =========================================================
-% 4. RBF, combined error, and SFPPB-RL steering law
-% =========================================================
+% RBFNN 与最终控制律
 phi = AGV_RBF(Z2);
 z2_control = C'*z2/C_norm - O;
 
-WF = x(1:7);
 F_hat = WF'*phi;
 actor_term = Wa'*phi;
 
@@ -171,5 +143,6 @@ else
     delta_sat = delta;
 end
 
-% Third output is the Actor norm for observing weight growth.
-sys = [delta; delta_sat; norm(Wa)];
+% 输出全部神经网络权重范数，用于观察整体权重变化。
+weight_norm = norm([WF; Wc; Wa]);
+sys = [delta; delta_sat; weight_norm];
