@@ -59,7 +59,6 @@ cf = 80000*(1 + 0.1*sin(0.01*t));
 c_y = cf/m;
 c_phi = lf*cf/Iz;
 C = [c_y; c_phi];
-C_norm = norm(C);
 
 % RBFNN
 phi = AGV_RBF(Z2);
@@ -67,7 +66,8 @@ phi = AGV_RBF(Z2);
 % Identifier
 % 加权投影诊断：提高 y 通道权重，检查二维误差抵消问题。
 P = diag([3, 1]);
-z2_control = C'*P*z2/sqrt(C'*P*C) - O;
+C_gain = sqrt(C'*P*C);
+z2_control = C'*P*z2/C_gain - O;
 
 Gamma_F = 0.2;
 sigma_F = 2.0;
@@ -87,11 +87,11 @@ c2 = 30;
 F_hat = WF'*phi;
 actor_term = Wa'*phi;
 
-delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_norm;
+delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_gain;
 
 u_d = 0.5;
 k_delta = u_d*tanh(delta/u_d);
-dO = -O + C_norm*(k_delta - delta);
+dO = -O + C_gain*(k_delta - delta);
 
 sys = [dWF; dWc; dWa; dO];
 
@@ -124,18 +124,18 @@ cf = 80000*(1 + 0.1*sin(0.01*t));
 c_y = cf/m;
 c_phi = lf*cf/Iz;
 C = [c_y; c_phi];
-C_norm = norm(C);
 
 % RBFNN 与最终控制律
 phi = AGV_RBF(Z2);
 P = diag([3, 1]);
-z2_control = C'*P*z2/sqrt(C'*P*C) - O;
+C_gain = sqrt(C'*P*C);
+z2_control = C'*P*z2/C_gain - O;
 
 F_hat = WF'*phi;
 actor_term = Wa'*phi;
 
 c2 = 30;
-delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_norm;
+delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_gain;
 
 % Keep the hard actuator limit used by the vehicle model.
 u_d = 0.5;
