@@ -51,10 +51,11 @@ dphi_dz2 = dphi_J(:,3:4);
 % while the RBF actor learns the state-dependent correction. Its ability
 % to stabilize the full AGV/SFPPB dynamics must be verified separately.
 grad_J_seed = 0.04*z2_bar;
+Q1 = eye(2);
 Q2 = eye(2);
 r = 2;
 
-grad_J_critic = grad_J_seed + dphi_dz2'*Wc;
+grad_J_critic = [zeros(2,1); grad_J_seed] + dphi_J'*Wc;
 grad_J_actor = grad_J_seed + dphi_dz2'*Wa;
 delta = -(C'*grad_J_actor)/(2*r);
 
@@ -64,11 +65,17 @@ u_d = 0.5;
 delta_applied = saturateSteering(delta,u_d);
 dO2 = -O2 + C*(delta_applied - delta);
 
-% Normalized continuous-time Bellman-residual update.
+% Complete four-dimensional Bellman residual for X_H = [s1; z2_bar].
+s1 = Z_J(1:2);
+Sigma = diag([u(1), u(4)]);
+D1 = diag([2, 1.5]);
+C1 = diag([2, 22]);
+s1_dot = -C1*s1 + D1*Sigma*(z2_bar + O2);
 z2_bar_dot_hat = F_hat + C*delta + O2;
-instant_cost = z2_bar'*Q2*z2_bar + r*delta^2;
-bellman_error = instant_cost + grad_J_critic'*z2_bar_dot_hat;
-critic_regressor = dphi_dz2*z2_bar_dot_hat;
+X_H_dot = [s1_dot; z2_bar_dot_hat];
+instant_cost = s1'*Q1*s1 + z2_bar'*Q2*z2_bar + r*delta^2;
+bellman_error = instant_cost + grad_J_critic'*X_H_dot;
+critic_regressor = dphi_J*X_H_dot;
 critic_normalizer = 1 + critic_regressor'*critic_regressor;
 gamma_c = 0.75;
 dWc = -gamma_c*critic_regressor*bellman_error/critic_normalizer^2;
