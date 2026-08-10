@@ -159,3 +159,37 @@ z2_bar = z2-O2
 | `assist1.m` | 原输入约束辅助 S-Function |
 | `AGV_simulate.slx` | 保持不变的 Simulink 模型 |
 | `AGV_plot.m` | 仿真结果绘图脚本 |
+
+## Critic normalization 诊断结果
+
+本轮严格冻结 `gamma_c`、`gamma_a`、`r`、`Q1`、`Q2`、RBF 宽度和初始策略，只增加离线诊断脚本 `AGV_diagnose.m`，并对 Critic 归一化做一次 A/B 对照。
+
+诊断采用仿真保存的完整 S-Function 状态，离线重构
+
+```text
+F_true = d(z2-O2)/dt - C*delta_applied - O2
+```
+
+平方归一化基线在 `t=1.8945 s` 的结果为：
+
+- `F_hat = [0.04738, -0.04885]`
+- `F_true = [-0.76773, -0.27967]`
+- `|F_true-F_hat| = [0.81511, 0.23081]`，末端范数约 `0.84715`
+- 整个诊断窗口 Identifier 残差范数 RMS 约 `0.79716`，最大约 `3.686`
+- `||omega_c|| = 504.86`，`|epsilon_H| = 276.36`
+- 临界点 `||dWc||`：平方归一化约 `1.61e-6`，单次归一化约 `0.41055`
+
+这说明 Identifier 不是完全失效，但 y 通道在临界点的估计存在明显偏差。因此单次归一化只作为受控失败对照，不作为主线控制律：
+
+```matlab
+% A: baseline
+dWc = -gamma_c*critic_regressor*bellman_error/critic_normalizer^2;
+
+% B: diagnostic only
+dWc = -gamma_c*critic_regressor*bellman_error/critic_normalizer;
+```
+
+B 方案在安全窗口 `t=0.3 s` 已将最大 Critic 更新范数从约 `0.134` 放大到约 `0.703`，继续仿真时在约 `t=0.339474 s` 触发求解器困难并导致 `AGV_transfor` 输出异常；它没有改善稳定性。因此当前 `main` 已恢复 A 方案，20 s 仿真仍在约 `1.8949 s` 失败。
+
+当前结论是：Critic 平方归一化确实存在近边界冻结，但简单删除一个平方又过于激进；下一步应研究与 SFPPB 奇异尺度匹配的有界/分层归一化，并在此之前改进 Identifier 估计质量。当前不应调学习率、扩 Identifier、修改 `AGV_transfor.m` 或改变 Simulink 接口。
+
