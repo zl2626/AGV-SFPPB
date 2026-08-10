@@ -1,12 +1,17 @@
-function [sys,x0,str,ts] = AGV_ctrl(t,x,u,flag,safety_lambda)
+function [sys,x0,str,ts] = AGV_ctrl( ...
+    t,x,u,flag,safety_lambda,learning_enabled)
+% safety_lambda and learning_enabled are Level-1 S-Function parameters.
 if nargin < 5 || isempty(safety_lambda)
     safety_lambda = 100;
+end
+if nargin < 6 || isempty(learning_enabled)
+    learning_enabled = true;
 end
 switch flag
 case 0
     [sys,x0,str,ts] = mdlInitializeSizes;
 case 1
-    sys = mdlDerivatives(t,x,u,safety_lambda);
+    sys = mdlDerivatives(t,x,u,safety_lambda,learning_enabled);
 case 3
     sys = mdlOutputs(t,x,u,safety_lambda);
 case {2,4,9}
@@ -34,7 +39,7 @@ x0 = [WF0(:); Wc0; Wa0; O20];
 str = [];
 ts = [0 0];
 
-function sys = mdlDerivatives(t,x,u,safety_lambda)
+function sys = mdlDerivatives(t,x,u,safety_lambda,learning_enabled)
 [WF,Wc,Wa,O2] = unpackStates(x);
 [Z_F,Z_J,z2_bar,C] = controllerInputs(t,u,O2);
 
@@ -97,6 +102,12 @@ sigma_a = 0.02;
 dWa = -gamma_a*psi_actor*hamiltonian_gradient ...
     /(1 + psi_actor'*psi_actor) ...
     - sigma_a*(Wa - admissibleActorWeights);
+
+if ~learning_enabled
+    dWF = zeros(size(dWF));
+    dWc = zeros(size(dWc));
+    dWa = zeros(size(dWa));
+end
 
 sys = [dWF(:); dWc; dWa; dO2];
 

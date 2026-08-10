@@ -1,8 +1,11 @@
-function report = AGV_diagnose(stop_time, make_plots, safety_lambda)
+function report = AGV_diagnose( ...
+    stop_time,make_plots,safety_lambda,learning_enabled)
 %AGV_DIAGNOSE Reconstruct Identifier and Critic diagnostics offline.
 %   report = AGV_diagnose() runs the complete 20 s benchmark and reports:
 %       |F_true - F_hat|, ||omega_c||, two Bellman residuals, and both
 %       critic rates.
+%   The optional third and fourth inputs set the safety-filter lambda and
+%   enable or freeze all Identifier-Critic-Actor weight updates.
 %   The model configuration is changed only in memory and is not saved.
 %
 %   F_true is reconstructed from the logged z2 trajectory:
@@ -19,12 +22,17 @@ end
 if nargin < 3
     safety_lambda = 100;
 end
+if nargin < 4
+    learning_enabled = true;
+end
 
 model = 'AGV_simulate';
 load_system(model);
 cleanup_model = onCleanup(@() close_system(model, 0));
 controller_block = [model '/S-Function3'];
-set_param(controller_block,'Parameters',num2str(safety_lambda,16));
+controller_parameters = sprintf('%.16g,%d', ...
+    safety_lambda,logical(learning_enabled));
+set_param(controller_block,'Parameters',controller_parameters);
 
 set_param(model, ...
     'StopTime', num2str(stop_time, 16), ...
@@ -162,12 +170,16 @@ report.max_saturation_gap = max(abs(delta-delta_applied));
 filter_active = abs(delta-delta_nominal) > 1e-8;
 duration = max(t(end)-t(1),eps);
 report.safety_lambda = safety_lambda;
+report.learning_enabled = logical(learning_enabled);
 report.filter_active_ratio = trapz(t,double(filter_active))/duration;
 report.filter_active_time = trapz(t,double(filter_active));
 report.max_filter_correction = max(abs(delta-delta_nominal));
 report.safety_conflict_ratio = trapz(t,double(safety_conflict))/duration;
 report.safety_conflict_count = sum(diff([false;safety_conflict]) > 0);
 report.control_energy = trapz(t,delta_applied.^2);
+report.tracking_ISE = [trapz(t,simulation.e_y(:).^2), ...
+    trapz(t,simulation.e_phi(:).^2)];
+report.tracking_RMS = sqrt(report.tracking_ISE/duration);
 report.max_O2 = max(vecnorm(O2,2,2));
 report.WF_end_norm = norm(ctrl_states(end,1:18));
 report.Wc_end_norm = norm(ctrl_states(end,19:27));
@@ -181,11 +193,14 @@ fprintf('minimum SFPPB margins [y, phi] = [%.9g, %.9g]\n', ...
     report.min_margin_y,report.min_margin_phi);
 fprintf('max |delta| / |applied| / saturation gap = %.9g / %.9g / %.9g\n', ...
     report.max_delta,report.max_delta_applied,report.max_saturation_gap);
-fprintf(['lambda = %.9g, filter active = %.6g%%, max correction = %.9g, ' ...
-    'conflicts = %d\n'],report.safety_lambda,100*report.filter_active_ratio, ...
+fprintf(['lambda = %.9g, learning = %d, filter active = %.6g%%, ' ...
+    'max correction = %.9g, conflicts = %d\n'], ...
+    report.safety_lambda,report.learning_enabled,100*report.filter_active_ratio, ...
     report.max_filter_correction,report.safety_conflict_count);
 fprintf('control energy = %.9g, max ||O2|| = %.9g\n', ...
     report.control_energy,report.max_O2);
+fprintf('tracking RMS [y, phi] = [%.9g, %.9g]\n', ...
+    report.tracking_RMS(1),report.tracking_RMS(2));
 fprintf('end ||WF|| / ||Wc|| / ||Wa-Wa0|| = %.9g / %.9g / %.9g\n', ...
     report.WF_end_norm,report.Wc_end_norm,report.Wa_move);
 fprintf('F_hat(end)  = [% .9g, % .9g]\n', F_hat(end, 1), F_hat(end, 2));
