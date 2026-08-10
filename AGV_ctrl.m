@@ -1,17 +1,24 @@
 function [sys,x0,str,ts] = AGV_ctrl( ...
-    t,x,u,flag,safety_lambda,learning_enabled)
-% safety_lambda and learning_enabled are Level-1 S-Function parameters.
+    t,x,u,flag,safety_lambda,learning_enabled,filter_gated_actor,control_weight)
+% The final four inputs are Level-1 S-Function parameters.
 if nargin < 5 || isempty(safety_lambda)
     safety_lambda = 100;
 end
 if nargin < 6 || isempty(learning_enabled)
     learning_enabled = true;
 end
+if nargin < 7 || isempty(filter_gated_actor)
+    filter_gated_actor = true;
+end
+if nargin < 8 || isempty(control_weight)
+    control_weight = 1;
+end
 switch flag
 case 0
     [sys,x0,str,ts] = mdlInitializeSizes;
 case 1
-    sys = mdlDerivatives(t,x,u,safety_lambda,learning_enabled);
+    sys = mdlDerivatives( ...
+        t,x,u,safety_lambda,learning_enabled,filter_gated_actor,control_weight);
 case 3
     sys = mdlOutputs(t,x,u,safety_lambda);
 case {2,4,9}
@@ -39,7 +46,8 @@ x0 = [WF0(:); Wc0; Wa0; O20];
 str = [];
 ts = [0 0];
 
-function sys = mdlDerivatives(t,x,u,safety_lambda,learning_enabled)
+function sys = mdlDerivatives( ...
+    t,x,u,safety_lambda,learning_enabled,filter_gated_actor,control_weight)
 [WF,Wc,Wa,O2] = unpackStates(x);
 [Z_F,Z_J,z2_bar,C] = controllerInputs(t,u,O2);
 
@@ -64,12 +72,12 @@ grad_s1_seed = k0*s1.*(z2_bar.^2);
 grad_z2_seed = k0*seed_weight.*z2_bar;
 Q1 = eye(2);
 Q2 = eye(2);
-r = 2;
+r = control_weight;
 
 grad_J_critic = [grad_s1_seed; grad_z2_seed] + dphi_J'*Wc;
 psi_actor = actorFeatures(Z_F,Z_J);
 delta_nominal = Wa'*psi_actor;
-delta = sfppbSafetyFilter(t,Z_F,delta_nominal,C,safety_lambda);
+[delta,~] = sfppbSafetyFilter(t,Z_F,delta_nominal,C,safety_lambda);
 
 % The vector auxiliary state exactly uses the steering signal applied to
 % the vehicle, so z2_bar = z2 - O2 removes the saturation mismatch.
@@ -99,9 +107,16 @@ hamiltonian_gradient = 2*r*delta_nominal ...
     + C'*grad_J_critic(3:4);
 gamma_a = 0.001;
 sigma_a = 0.02;
-dWa = -gamma_a*psi_actor*hamiltonian_gradient ...
-    /(1 + psi_actor'*psi_actor) ...
-    - sigma_a*(Wa - admissibleActorWeights);
+dWa_hamiltonian = -gamma_a*psi_actor*hamiltonian_gradient ...
+    /(1 + psi_actor'*psi_actor);
+% Keep the zero-state steering offset anchored to the admissible policy.
+% The physical-state and barrier features retain online adaptation.
+dWa_hamiltonian(end) = 0;
+filter_active = abs(delta-delta_nominal) > 1e-8;
+if filter_gated_actor && filter_active
+    dWa_hamiltonian = zeros(size(Wa));
+end
+dWa = dWa_hamiltonian - sigma_a*(Wa - admissibleActorWeights);
 
 if ~learning_enabled
     dWF = zeros(size(dWF));
