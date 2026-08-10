@@ -1,11 +1,14 @@
-function [sys,x0,str,ts] = AGV_ctrl(t,x,u,flag)
+function [sys,x0,str,ts] = AGV_ctrl(t,x,u,flag,safety_lambda)
+if nargin < 5 || isempty(safety_lambda)
+    safety_lambda = 100;
+end
 switch flag
 case 0
     [sys,x0,str,ts] = mdlInitializeSizes;
 case 1
-    sys = mdlDerivatives(t,x,u);
+    sys = mdlDerivatives(t,x,u,safety_lambda);
 case 3
-    sys = mdlOutputs(t,x,u);
+    sys = mdlOutputs(t,x,u,safety_lambda);
 case {2,4,9}
     sys = [];
 otherwise
@@ -16,7 +19,7 @@ function [sys,x0,str,ts] = mdlInitializeSizes
 sizes = simsizes;
 sizes.NumContStates  = 38;
 sizes.NumDiscStates  = 0;
-sizes.NumOutputs     = 3;
+sizes.NumOutputs     = 8;
 sizes.NumInputs      = 13;
 sizes.DirFeedthrough = 1;
 sizes.NumSampleTimes = 1;
@@ -31,7 +34,7 @@ x0 = [WF0(:); Wc0; Wa0; O20];
 str = [];
 ts = [0 0];
 
-function sys = mdlDerivatives(t,x,u)
+function sys = mdlDerivatives(t,x,u,safety_lambda)
 [WF,Wc,Wa,O2] = unpackStates(x);
 [Z_F,Z_J,z2_bar,C] = controllerInputs(t,u,O2);
 
@@ -61,7 +64,7 @@ r = 2;
 grad_J_critic = [grad_s1_seed; grad_z2_seed] + dphi_J'*Wc;
 psi_actor = actorFeatures(Z_F,Z_J);
 delta_nominal = Wa'*psi_actor;
-delta = sfppbSafetyFilter(t,Z_F,delta_nominal,C);
+delta = sfppbSafetyFilter(t,Z_F,delta_nominal,C,safety_lambda);
 
 % The vector auxiliary state exactly uses the steering signal applied to
 % the vehicle, so z2_bar = z2 - O2 removes the saturation mismatch.
@@ -97,18 +100,25 @@ dWa = -gamma_a*psi_actor*hamiltonian_gradient ...
 
 sys = [dWF(:); dWc; dWa; dO2];
 
-function sys = mdlOutputs(t,x,u)
+function sys = mdlOutputs(t,x,u,safety_lambda)
 [WF,Wc,Wa,O2] = unpackStates(x);
 [Z_F,Z_J,~,C] = controllerInputs(t,u,O2);
 
 psi_actor = actorFeatures(Z_F,Z_J);
 delta_nominal = Wa'*psi_actor;
-delta = sfppbSafetyFilter(t,Z_F,delta_nominal,C);
+[delta,safety_conflict] = sfppbSafetyFilter( ...
+    t,Z_F,delta_nominal,C,safety_lambda);
 
 u_d = 0.5;
 delta_applied = saturateSteering(delta,u_d);
 weight_norm = norm([WF(:); Wc; Wa]);
-sys = [delta; delta_applied; weight_norm];
+WF_norm = norm(WF(:));
+Wc_norm = norm(Wc);
+Wa_move = norm(Wa - admissibleActorWeights);
+% First three outputs preserve the original Simulink signal order. The
+% remaining outputs are diagnostic logs only.
+sys = [delta; delta_applied; weight_norm; delta_nominal; ...
+    WF_norm; Wc_norm; Wa_move; double(safety_conflict)];
 
 function [WF,Wc,Wa,O2] = unpackStates(x)
 WF = reshape(x(1:18),9,2);
@@ -154,8 +164,10 @@ else
     delta_applied = delta;
 end
 
-function delta = sfppbSafetyFilter(t,Z_F,delta_nominal,C)
+function [delta,interval_conflict] = sfppbSafetyFilter( ...
+    t,Z_F,delta_nominal,C,lambda)
 delta = delta_nominal;
+interval_conflict = false;
 if t < 5
     return;
 end
@@ -178,7 +190,6 @@ f = [(cf + cr)*e(2)/m + A11*de(1) + A12*de(2); ...
 
 terminal_bound = [0.03; 0.005];
 disturbance_bound = [25; 25];
-lambda = 100;
 h_lower = e + terminal_bound;
 h_upper = terminal_bound - e;
 lower_each = (-f + disturbance_bound - 2*lambda*de ...
@@ -191,6 +202,7 @@ upper = min([0.5; upper_each]);
 if lower <= upper
     delta = min(max(delta_nominal,lower),upper);
 else
+    interval_conflict = true;
     risks = [h_lower./terminal_bound; h_upper./terminal_bound];
     [~,critical] = min(risks);
     if critical <= 2

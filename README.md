@@ -14,8 +14,12 @@
 | 最小 y 边界裕量 | `0.00425618` |
 | 最小 phi 边界裕量 | `0.000730602` |
 | 最小归一化边界裕量 | `14.1873%` |
-| 最大请求转向 `max|delta|` | `0.496847 rad` |
+| 最大 Actor 原始转向 `max|delta_Actor|` | `0.470090 rad` |
+| 最大安全滤波转向 `max|delta_safe|` | `0.496847 rad` |
 | 最大实际转向 `max|sat(delta)|` | `0.496847 rad` |
+| 安全滤波介入时间比例 | `6.2362%` |
+| 最大安全修正量 | `0.369264 rad` |
+| 安全区间冲突次数 | `0` |
 | 最大饱和失配 | `0` |
 | 最大 `||O2||` | `0` |
 | 末端误差 `[e_y,e_phi]` | `[-0.00161726,-2.91e-6]` |
@@ -27,7 +31,14 @@
 - 自动求解器运行 `60 s`：通过；最小 y/phi 裕量分别为 `0.00250423` 和 `0.000729638`，最大转向 `0.497136 rad`，无饱和失配。
 - `ode15s` 运行 `20 s`：通过；边界裕量与自动求解器结果一致，最大转向 `0.496847 rad`。
 - `AGV_ctrl.m`、`AGV_diagnose.m`、`AGV_RBF.m` 和 `AGV_plot.m` 的 MATLAB 静态检查均为 0 个问题。
-- `AGV_ctrl` 接口保持 38 个连续状态、13 个输入、3 个输出；没有增加代码文件，也没有修改外部 Simulink 端口。
+- `AGV_ctrl` 保持 38 个连续状态和 13 个控制输入；输出由 3 个扩展为 8 个，仅增加 Actor、安全滤波和学习状态的诊断日志，没有改变车辆闭环控制通道。
+
+新增日志以一个向量写入 `ctrl_diagnostics`，列顺序为：
+
+```text
+[delta_safe, delta_applied, total_weight_norm, delta_Actor,
+ ||WF||, ||Wc||, ||Wa-Wa0||, safety_interval_conflict]
+```
 
 ## 当前控制结构
 
@@ -128,7 +139,7 @@ z2_bar = z2-O2
 运行：
 
 ```matlab
-report = AGV_diagnose(20, false);
+report = AGV_diagnose(20, false, 100);
 ```
 
 当前 20 s 诊断结果：
@@ -141,8 +152,26 @@ report = AGV_diagnose(20, false);
 | `RMS |epsilon_data|` | `11.6977` |
 | Bellman residual gap 比例 | `5.9587%` |
 | 最大实际 Critic 更新率 | `0.08078` |
+| 安全滤波介入时间比例 | `6.2362%` |
+| 安全区间冲突次数 | `0` |
+| 控制能量 `integral(delta^2)` | `0.207757` |
 
 Identifier 在脉冲扰动期间仍有明显点对点误差，但模型残差与数据残差的差距约为 Bellman residual RMS 的 5.96%，已不再像旧版本那样与 Critic 数值条件完全混在一起。当前学习率使 Critic 保持真实更新，同时没有复现单次归一化高增益版本在 0.34 s 左右失稳的问题。
+
+安全滤波诊断同时记录 `delta_Actor`、`delta_safe` 和 `delta_applied`。20 s 内安全滤波只在约 6.24% 的时间修改 Actor 输出，且可行区间没有冲突。因此当前结构不是由安全滤波全程替代 Actor；安全层主要在脉冲扰动附近介入。另一方面，当前仿真没有发生执行器饱和，`O2` 仍为零，所以这组结果只能证明输入约束得到满足，不能证明饱和补偿状态在当前工况中发挥了主要作用。
+
+### Safety-filter lambda 受控扫描
+
+保持 SFPPB、扰动上界、Actor/Critic、RBF 和车辆模型全部不变，只在 60 s 工况下扫描安全滤波参数：
+
+| `lambda` | 60 s 状态 | 最小归一化裕量 | `max|delta|` | 滤波介入比例 | 区间冲突次数 | 控制能量 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 60 | 未通过 | — | — | — | — | — |
+| 80 | 通过 | `7.0533%` | `0.484797` | `12.0252%` | 7 | `0.703794` |
+| 100 | 通过 | `8.3474%` | `0.497136` | `7.2802%` | 0 | `0.697138` |
+| 120 | 通过 | `10.0292%` | `0.500000` | `6.2144%` | 2 | `0.693504` |
+
+因此主线继续保留 `lambda = 100`：它是本轮候选中唯一在 60 s 内没有安全区间冲突的取值。`lambda = 80` 虽降低转向峰值，但边界裕量更小且出现 7 次冲突；`lambda = 120` 达到约 10% 裕量，却触及硬转向上限并出现冲突。该实验也说明，仅调 `lambda` 不能同时达到“归一化裕量大于 10% 且最大转向小于 0.47 rad”的新目标。
 
 ## 历史问题如何被解决
 
@@ -168,20 +197,20 @@ Identifier 在脉冲扰动期间仍有明显点对点误差，但模型残差与
 
 1. 在 MATLAB 中将本目录设为当前文件夹。
 2. 打开并运行 `AGV_simulate.slx`；模型默认仿真时间为 20 s。
-3. 仿真结束后运行 `AGV_plot.m` 查看误差、SFPPB、转向和权重曲线。
-4. 运行 `AGV_diagnose(20,false)` 获取 Identifier 与 Bellman residual 数值诊断。
+3. 仿真结束后运行 `AGV_plot.m`。脚本生成 5 类论文主图和 1 张附录诊断图，并自动导出矢量 PDF 与 600 dpi PNG 到 `Fig/paper/`。
+4. 运行 `AGV_diagnose(20,false,100)` 获取 Identifier、Bellman residual、Actor/安全滤波和权重数值诊断；第三个参数用于受控测试 `lambda`。
 
 ## 文件说明
 
 | 文件 | 作用 |
 | --- | --- |
-| `AGV_simulate.slx` | 保持原有总体连线和外部接口的 Simulink 主模型 |
+| `AGV_simulate.slx` | 保持原有闭环控制连线，并记录 Actor、安全滤波和学习状态 |
 | `AGV_plant.m` | AGV 横向动力学、道路曲率和周期脉冲扰动 |
 | `AGV_transfor.m` | SFPPB、NMT、第一层反步与二维 `z2` 生成 |
 | `AGV_ctrl.m` | Identifier、四维 Critic、direct-policy Actor、安全投影和输入约束 |
 | `AGV_RBF.m` | Identifier/Critic RBF 特征及解析 Jacobian |
 | `assist1.m` | 原 SFPPB 输入约束柔性边界辅助状态 |
-| `AGV_diagnose.m` | Identifier 与双 Bellman residual 离线诊断 |
-| `AGV_plot.m` | 20 s/长时仿真结果绘图 |
+| `AGV_diagnose.m` | Identifier、双 Bellman residual、安全滤波和权重离线诊断 |
+| `AGV_plot.m` | 单图单问题科研作图及 PDF/600 dpi PNG 导出 |
 
-本轮没有增加代码文件；Simulink 外部结构、13 输入/3 输出控制器接口和原车辆模型均保持不变。
+本轮没有增加代码文件。Simulink 仅扩展控制器诊断输出和日志，原车辆模型、13 路控制输入以及闭环执行器通道保持不变。

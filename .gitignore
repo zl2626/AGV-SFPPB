@@ -1,6 +1,7 @@
 # MATLAB autosave / cache
 *.asv
 slprj/
+Fig/paper/
 
 # Windows
 Thumbs.db

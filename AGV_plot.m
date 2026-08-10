@@ -1,6 +1,6 @@
 close all;
 
-% Simulation data
+% Logged simulation data
 t = out.t(:);
 e_y = out.e_y(:);
 eyu = out.eyu(:);
@@ -18,221 +18,152 @@ s2y = out.s2y(:);
 z2y = out.z2y(:);
 s2phi = out.s2phi(:);
 z2phi = out.z2phi(:);
-delta = out.delta(:);
-delta1 = out.delta1(:);
-W = out.W(:);
-w = out.w(:);
+delta_safe = out.delta(:);
+delta_applied = out.delta1(:);
+ctrl_diagnostics = out.ctrl_diagnostics;
+delta_actor = ctrl_diagnostics(:,4);
+WF_norm = ctrl_diagnostics(:,5);
+Wc_norm = ctrl_diagnostics(:,6);
+Wa_move = ctrl_diagnostics(:,7);
 
-% AGV-TFS scientific line convention
-blue = [0, 0.4470, 0.7410];
-red = [0.8500, 0.3250, 0.0980];
-green = [0.4660, 0.6740, 0.1880];
-purple = [0.4940, 0.1840, 0.5560];
-gray = [0.25, 0.25, 0.25];
-lw_response = 2.0;
-lw_boundary = 1.7;
-lw_reference = 1.4;
+output_dir = fullfile(fileparts(mfilename('fullpath')),'Fig','paper');
+if ~exist(output_dir,'dir')
+    mkdir(output_dir);
+end
 
-%% Figure 1: prescribed-performance tracking
-figure(1);
-set(gcf,'Color','w','Units','centimeters','Position',[2,2,18.5,15.5]);
-tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
+%% Fig. 1: lateral tracking error and SFPPB
+fig = figure(1);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,8.6,6.4]);
+hold on;
+plot(t,e_y,'b-','LineWidth',2.0);
+plot(t,eyu,'r--','LineWidth',1.8);
+plot(t,eyl,'r--','LineWidth',1.8,'HandleVisibility','off');
+hold off;
+formatAxes(gca,t(end),[-0.22,0.04]);
+xlabel('Time (s)','Interpreter','latex','FontSize',14);
+ylabel('$e_y\;(\mathrm{m})$','Interpreter','latex','FontSize',14);
+legend({'$e_y$','SFPPB'},'Interpreter','latex','FontSize',11, ...
+    'Location','southeast','Box','off');
+exportFigure(fig,output_dir,'Fig1_error_y');
 
-ax = nexttile;
-hold(ax,'on');
-plot(t,e_y,'-','Color',blue,'LineWidth',lw_response);
-plot(t,eyu,'--','Color',red,'LineWidth',lw_boundary);
-plot(t,eyl,'--','Color',red,'LineWidth',lw_boundary);
-hold(ax,'off');
-styleAxes(ax,t(end));
-ylabel(ax,'$e_y\;(\mathrm{m})$','Interpreter','latex');
-title(ax,'\textbf{(a)}\quad Lateral tracking error','Interpreter','latex');
-legend(ax,{'$e_y$','$\overline{B}_y$','$\underline{B}_y$'}, ...
-    'Interpreter','latex','Location','southeast','Box','off');
-padYLim(ax,[e_y;eyu;eyl]);
-
-ax = nexttile;
-hold(ax,'on');
-plot(t,e_phi,'-','Color',blue,'LineWidth',lw_response);
-plot(t,ephiu,'--','Color',red,'LineWidth',lw_boundary);
-plot(t,ephil,'--','Color',red,'LineWidth',lw_boundary);
-hold(ax,'off');
-styleAxes(ax,t(end));
-ylabel(ax,'$e_{\varphi}\;(\mathrm{rad})$','Interpreter','latex');
-title(ax,'\textbf{(b)}\quad Heading tracking error','Interpreter','latex');
-legend(ax,{'$e_{\varphi}$','$\overline{B}_{\varphi}$', ...
-    '$\underline{B}_{\varphi}$'},'Interpreter','latex', ...
+%% Fig. 2: heading tracking error and SFPPB
+fig = figure(2);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,8.6,6.4]);
+hold on;
+plot(t,e_phi,'b-','LineWidth',2.0);
+plot(t,ephiu,'r--','LineWidth',1.8);
+plot(t,ephil,'r--','LineWidth',1.8,'HandleVisibility','off');
+hold off;
+formatAxes(gca,t(end),[-0.012,0.032]);
+xlabel('Time (s)','Interpreter','latex','FontSize',14);
+ylabel('$e_{\varphi}\;(\mathrm{rad})$','Interpreter','latex','FontSize',14);
+legend({'$e_{\varphi}$','SFPPB'},'Interpreter','latex','FontSize',11, ...
     'Location','northeast','Box','off');
-padYLim(ax,[e_phi;ephiu;ephil]);
+exportFigure(fig,output_dir,'Fig2_error_phi');
 
-ax = nexttile;
-hold(ax,'on');
-plot(t,e_y,'-','Color',blue,'LineWidth',lw_response);
-plot(t,eyu,'--','Color',red,'LineWidth',lw_boundary);
-plot(t,eyl,'--','Color',red,'LineWidth',lw_boundary);
-hold(ax,'off');
-styleAxes(ax,t(end));
-xlim(ax,[5,t(end)]);
-ylim(ax,[-0.032,0.032]);
-xlabel(ax,'Time (s)','Interpreter','latex');
-ylabel(ax,'$e_y\;(\mathrm{m})$','Interpreter','latex');
-title(ax,'\textbf{(c)}\quad Terminal-boundary detail','Interpreter','latex');
-markDisturbanceWindows(ax);
+%% Fig. 3: Actor command, safety-filtered command, and applied steering
+fig = figure(3);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,7.0]);
+hold on;
+h_actor = plot(t,delta_actor,'b-','LineWidth',2.0);
+h_applied = plot(t,delta_applied,'k:','LineWidth',2.2);
+h_safe = plot(t,delta_safe,'r--','LineWidth',1.8);
+h_limit = yline(0.5,'k-.','LineWidth',1.3);
+yline(-0.5,'k-.','LineWidth',1.3,'HandleVisibility','off');
+hold off;
+formatAxes(gca,t(end),[-0.52,0.52]);
+xlabel('Time (s)','Interpreter','latex','FontSize',14);
+ylabel('$\delta\;(\mathrm{rad})$','Interpreter','latex','FontSize',14);
+legend([h_actor,h_safe,h_applied,h_limit], ...
+    {'$\delta_{\mathrm{Actor}}$','$\delta_{\mathrm{safe}}$', ...
+    '$\delta_{\mathrm{applied}}$','$\pm\delta_{\max}$'}, ...
+    'Interpreter','latex','FontSize',11,'Location','northoutside', ...
+    'Orientation','horizontal','NumColumns',4,'Box','off');
+exportFigure(fig,output_dir,'Fig3_steering_allocation');
 
-ax = nexttile;
-hold(ax,'on');
-plot(t,1e3*e_phi,'-','Color',blue,'LineWidth',lw_response);
-plot(t,1e3*ephiu,'--','Color',red,'LineWidth',lw_boundary);
-plot(t,1e3*ephil,'--','Color',red,'LineWidth',lw_boundary);
-hold(ax,'off');
-styleAxes(ax,t(end));
-xlim(ax,[5,t(end)]);
-ylim(ax,[-5.5,5.5]);
-xlabel(ax,'Time (s)','Interpreter','latex');
-ylabel(ax,'$e_{\varphi}\;(\mathrm{mrad})$','Interpreter','latex');
-title(ax,'\textbf{(d)}\quad Terminal-boundary detail','Interpreter','latex');
-markDisturbanceWindows(ax);
+%% Fig. 4: Identifier-Critic-Actor learning states
+fig = figure(4);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,6.8]);
+hold on;
+plot(t,WF_norm,'b-','LineWidth',2.0);
+plot(t,Wc_norm,'r--','LineWidth',1.8);
+plot(t,Wa_move,'k-.','LineWidth',1.3);
+hold off;
+formatAxes(gca,t(end),[0,0.09]);
+xlabel('Time (s)','Interpreter','latex','FontSize',14);
+ylabel('Weight magnitude','Interpreter','latex','FontSize',14);
+legend({'$\Vert W_F\Vert_2$','$\Vert W_c\Vert_2$', ...
+    '$\Vert W_a-W_{a0}\Vert_2$'},'Interpreter','latex', ...
+    'FontSize',11,'Location','northoutside','Orientation','horizontal', ...
+    'NumColumns',3,'Box','off');
+exportFigure(fig,output_dir,'Fig4_learning_weights');
 
-%% Figure 2: constrained steering and learning
-figure(2);
-set(gcf,'Color','w','Units','centimeters','Position',[2,2,18.5,13.5]);
+%% Fig. 5: vehicle lateral states
+fig = figure(5);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,8.6,10.8]);
 tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
 
 ax = nexttile;
-hold(ax,'on');
-plot(t,delta,'-','Color',blue,'LineWidth',lw_response);
-plot(t,delta1,'--','Color',red,'LineWidth',lw_boundary);
-yline(0.5,'-.','Color',green,'LineWidth',lw_reference);
-yline(-0.5,'-.','Color',green,'LineWidth',lw_reference);
-hold(ax,'off');
-styleAxes(ax,t(end));
-ylim(ax,[-0.55,0.55]);
-ylabel(ax,'$\delta\;(\mathrm{rad})$','Interpreter','latex');
-title(ax,'\textbf{(a)}\quad Steering command and actuator constraint', ...
-    'Interpreter','latex');
-legend(ax,{'$\delta$','$\mathrm{sat}(\delta)$','$\delta_{\max}$', ...
-    '$\delta_{\min}$'},'Interpreter','latex','Location','northoutside', ...
-    'Orientation','horizontal','NumColumns',4,'Box','off');
-markDisturbanceWindows(ax);
+plot(ax,t,v_y,'b-','LineWidth',2.0);
+formatAxes(ax,t(end),[-1.6,1.6]);
+ylabel(ax,'$v_y\;(\mathrm{m\,s^{-1}})$','Interpreter','latex','FontSize',14);
+text(ax,0.02,0.92,'(a)','Units','normalized','FontName','Times New Roman', ...
+    'FontSize',12,'FontWeight','bold');
 
 ax = nexttile;
-hold(ax,'on');
-plot(t,W,'-','Color',purple,'LineWidth',lw_response);
-plot(t,w,'--','Color',red,'LineWidth',lw_boundary);
-hold(ax,'off');
-styleAxes(ax,t(end));
-xlabel(ax,'Time (s)','Interpreter','latex');
-ylabel(ax,'Magnitude','Interpreter','latex');
-title(ax,'\textbf{(b)}\quad Adaptive weights and auxiliary state', ...
-    'Interpreter','latex');
-legend(ax,{'$\Vert W\Vert_2$','$w$'},'Interpreter','latex', ...
-    'Location','best','Box','off');
-padYLim(ax,[W;w]);
-markDisturbanceWindows(ax);
+plot(ax,t,omega_z,'b-','LineWidth',2.0);
+formatAxes(ax,t(end),[-1.6,1.6]);
+xlabel(ax,'Time (s)','Interpreter','latex','FontSize',14);
+ylabel(ax,'$\omega_z\;(\mathrm{rad\,s^{-1}})$', ...
+    'Interpreter','latex','FontSize',14);
+text(ax,0.02,0.92,'(b)','Units','normalized','FontName','Times New Roman', ...
+    'FontSize',12,'FontWeight','bold');
+exportFigure(fig,output_dir,'Fig5_vehicle_states');
 
-%% Figure 3: transformed and sliding variables
-figure(3);
-set(gcf,'Color','w','Units','centimeters','Position',[2,2,18.5,15.5]);
-tl = tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
-plotPair(nexttile,t,s1y,z1y,'$s_{1y}$','$z_{1y}$', ...
-    '\textbf{(a)}\quad First-layer lateral variables',blue,red, ...
-    lw_response,lw_boundary);
-plotPair(nexttile,t,s1phi,z1phi,'$s_{1\varphi}$','$z_{1\varphi}$', ...
-    '\textbf{(b)}\quad First-layer heading variables',blue,red, ...
-    lw_response,lw_boundary);
-plotPair(nexttile,t,s2y,z2y,'$s_{2y}$','$z_{2y}$', ...
-    '\textbf{(c)}\quad Second-layer lateral variables',blue,red, ...
-    lw_response,lw_boundary);
-plotPair(nexttile,t,s2phi,z2phi,'$s_{2\varphi}$','$z_{2\varphi}$', ...
-    '\textbf{(d)}\quad Second-layer heading variables',blue,red, ...
-    lw_response,lw_boundary);
-xlabel(tl,'Time (s)','Interpreter','latex','FontSize',13);
-
-%% Figure 4: vehicle states and road curvature
-figure(4);
-set(gcf,'Color','w','Units','centimeters','Position',[2,2,18.5,15.5]);
-tl = tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
+%% Fig. A1: transformed-state diagnostics for the appendix
+fig = figure(6);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,12.0]);
+tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
 
 ax = nexttile;
-plot(t,v_y,'-','Color',blue,'LineWidth',lw_response);
-styleAxes(ax,t(end));
-ylabel(ax,'$v_y\;(\mathrm{m\,s^{-1}})$','Interpreter','latex');
-title(ax,'\textbf{(a)}\quad Lateral velocity','Interpreter','latex');
-padYLim(ax,v_y);
-
+plotDiagnosticPair(ax,t,s1y,z1y,'$s_{1y}$','$z_{1y}$',[-6,7]);
 ax = nexttile;
-plot(t,omega_z,'-','Color',blue,'LineWidth',lw_response);
-styleAxes(ax,t(end));
-ylabel(ax,'$\omega_z\;(\mathrm{rad\,s^{-1}})$','Interpreter','latex');
-title(ax,'\textbf{(b)}\quad Yaw rate','Interpreter','latex');
-padYLim(ax,omega_z);
+plotDiagnosticPair(ax,t,s1phi,z1phi,'$s_{1\varphi}$', ...
+    '$z_{1\varphi}$',[-5,4]);
+ax = nexttile;
+plotDiagnosticPair(ax,t,s2y,z2y,'$s_{2y}$','$z_{2y}$',[-0.45,0.65]);
+xlabel(ax,'Time (s)','Interpreter','latex','FontSize',14);
+ax = nexttile;
+plotDiagnosticPair(ax,t,s2phi,z2phi,'$s_{2\varphi}$', ...
+    '$z_{2\varphi}$',[-0.28,0.25]);
+xlabel(ax,'Time (s)','Interpreter','latex','FontSize',14);
+exportFigure(fig,output_dir,'FigA1_transformed_states');
 
-ax = nexttile([1,2]);
-if isprop(out,'rho_0')
-    rho_0 = out.rho_0(:);
-    if numel(rho_0) == numel(t)
-        t_rho = t;
-    else
-        t_rho = linspace(t(1),t(end),numel(rho_0)).';
-    end
-else
-    rho_0 = [0;0.01;-0.01;0.01;zeros(6,1)];
-    t_rho = linspace(t(1),t(end),numel(rho_0)).';
-end
-stairs(t_rho,rho_0,'-','Color',gray,'LineWidth',lw_response);
-styleAxes(ax,t(end));
-xlabel(ax,'Time (s)','Interpreter','latex');
-ylabel(ax,'$\rho_0\;(\mathrm{m^{-1}})$','Interpreter','latex');
-title(ax,'\textbf{(c)}\quad Road curvature command','Interpreter','latex');
-padYLim(ax,rho_0);
-
-function styleAxes(ax,t_end)
-set(ax,'FontName','Times New Roman','FontSize',11,'LineWidth',1.0, ...
+function formatAxes(ax,t_end,y_limits)
+set(ax,'FontName','Times New Roman','FontSize',12,'LineWidth',1.0, ...
     'TickLabelInterpreter','latex','Box','on','Layer','top');
 ax.Toolbar.Visible = 'off';
 grid(ax,'on');
 ax.GridLineStyle = ':';
-ax.GridAlpha = 0.18;
-ax.MinorGridAlpha = 0.10;
+ax.GridAlpha = 0.15;
 xlim(ax,[0,t_end]);
+ylim(ax,y_limits);
 end
 
-function padYLim(ax,data)
-data = data(isfinite(data));
-if isempty(data)
-    return;
-end
-lo = min(data);
-hi = max(data);
-span = hi-lo;
-if span <= eps(max(abs([lo,hi,1])))
-    span = max(abs([lo,hi,1]))*0.1;
-end
-ylim(ax,[lo-0.08*span,hi+0.08*span]);
-end
-
-function plotPair(ax,t,s,z,s_label,z_label,panel_title,blue,red,lw_s,lw_z)
+function plotDiagnosticPair(ax,t,s,z,s_label,z_label,y_limits)
 hold(ax,'on');
-plot(ax,t,s,'-','Color',blue,'LineWidth',lw_s);
-plot(ax,t,z,'--','Color',red,'LineWidth',lw_z);
+plot(ax,t,s,'b-','LineWidth',2.0);
+plot(ax,t,z,'r--','LineWidth',1.8);
 hold(ax,'off');
-styleAxes(ax,t(end));
-ylabel(ax,'Amplitude','Interpreter','latex');
-title(ax,panel_title,'Interpreter','latex');
-legend(ax,{s_label,z_label},'Interpreter','latex','Location','best','Box','off');
-padYLim(ax,[s;z]);
+formatAxes(ax,t(end),y_limits);
+ylabel(ax,'Amplitude','Interpreter','latex','FontSize',14);
+legend(ax,{s_label,z_label},'Interpreter','latex','FontSize',11, ...
+    'Location','best','Box','off');
 end
 
-function markDisturbanceWindows(ax)
-windows = [7,8;15,16];
-yl = ylim(ax);
-hold(ax,'on');
-for k = 1:size(windows,1)
-    xline(ax,windows(k,1),':','Color',[0.45,0.45,0.45], ...
-        'LineWidth',0.9,'HandleVisibility','off');
-    xline(ax,windows(k,2),':','Color',[0.45,0.45,0.45], ...
-        'LineWidth',0.9,'HandleVisibility','off');
-end
-ylim(ax,yl);
-hold(ax,'off');
+function exportFigure(fig,output_dir,file_stem)
+exportgraphics(fig,fullfile(output_dir,[file_stem '.pdf']), ...
+    'ContentType','vector');
+exportgraphics(fig,fullfile(output_dir,[file_stem '.png']), ...
+    'Resolution',600);
 end
