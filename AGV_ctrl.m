@@ -14,7 +14,7 @@ end
 
 function [sys,x0,str,ts] = mdlInitializeSizes
 sizes = simsizes;
-sizes.NumContStates  = 22;
+sizes.NumContStates  = 38;
 sizes.NumDiscStates  = 0;
 sizes.NumOutputs     = 3;
 sizes.NumInputs      = 13;
@@ -22,129 +22,109 @@ sizes.DirFeedthrough = 1;
 sizes.NumSampleTimes = 1;
 sys = simsizes(sizes);
 
-% [WF(1:7); Wc(1:7); Wa(1:7); O]
-WF0 = zeros(7,1);
-Wc0 = 0.1*ones(7,1);
-Wa0 = 0.1*ones(7,1);
-O0 = 0;
-x0 = [WF0; Wc0; Wa0; O0];
+% [WF(9x2); Wc(9); Wa(9); O2(2)]
+WF0 = zeros(9,2);
+Wc0 = zeros(9,1);
+Wa0 = zeros(9,1);
+O20 = zeros(2,1);
+x0 = [WF0(:); Wc0; Wa0; O20];
 str = [];
 ts = [0 0];
 
 function sys = mdlDerivatives(t,x,u)
-% 神经网络权重
-WF = x(1:7);
-Wc = x(8:14);
-Wa = x(15:21);
-O = x(22);
+[WF,Wc,Wa,O2] = unpackStates(x);
+[Z_F,Z_J,z2_bar,C] = controllerInputs(t,u,O2);
 
-% 输入信号
-% 保持原有 13 输入接口不变。
-e_y = u(7);
-e_phi = u(8);
-de_y = u(9);
-de_phi = u(10);
-z2 = [u(11); u(12)];
-
-X1 = [e_y; e_phi];
-X2 = [de_y; de_phi];
-Z2 = [X1; X2];
-
-% 车辆参数
-m = 1832;
-Iz = 2488;
-lf = 1.18;
-cf = 80000*(1 + 0.1*sin(0.01*t));
-
-c_y = cf/m;
-c_phi = lf*cf/Iz;
-C = [c_y; c_phi];
-
-% RBFNN
-phi = AGV_RBF(Z2);
-
-% Identifier
-% 加权投影诊断：提高 y 通道权重，检查二维误差抵消问题。
-P = diag([3, 1]);
-C_gain = sqrt(C'*P*C);
-z2_control = C'*P*z2/C_gain - O;
-
+% Identifier: estimate the two components of the unknown z2 dynamics.
+phi_F = AGV_RBF(Z_F,'F');
 Gamma_F = 0.2;
 sigma_F = 2.0;
-dWF = Gamma_F*(z2_control*phi - sigma_F*WF);
+dWF = Gamma_F*(phi_F*z2_bar' - sigma_F*WF);
+F_hat = WF'*phi_F;
 
-% Critic
-gamma_c = 0.75;
-dWc = -gamma_c*phi*(phi'*Wc);
+% Critic/Actor: approximate one scalar value function and obtain its
+% two-dimensional gradient analytically. No scalar error projection is
+% introduced in this interface.
+[~,dphi_J] = AGV_RBF(Z_J,'J');
+dphi_dz2 = dphi_J(:,3:4);
+% Equal-channel quadratic term supplies a bounded initial value gradient
+% while the RBF actor learns the state-dependent correction. Its ability
+% to stabilize the full AGV/SFPPB dynamics must be verified separately.
+grad_J_seed = 0.04*z2_bar;
+Q2 = eye(2);
+r = 2;
 
-% Actor
-gamma_a = 1.0;
-actor_error = gamma_a*(Wa - Wc) + gamma_c*Wc;
-dWa = -phi*(phi'*actor_error);
+grad_J_critic = grad_J_seed + dphi_dz2'*Wc;
+grad_J_actor = grad_J_seed + dphi_dz2'*Wa;
+delta = -(C'*grad_J_actor)/(2*r);
 
-% 最终控制律
-c2 = 30;
-F_hat = WF'*phi;
-actor_term = Wa'*phi;
-
-delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_gain;
-
+% The vector auxiliary state exactly uses the steering signal applied to
+% the vehicle, so z2_bar = z2 - O2 removes the saturation mismatch.
 u_d = 0.5;
-k_delta = u_d*tanh(delta/u_d);
-dO = -O + C_gain*(k_delta - delta);
+delta_applied = saturateSteering(delta,u_d);
+dO2 = -O2 + C*(delta_applied - delta);
 
-sys = [dWF; dWc; dWa; dO];
+% Normalized continuous-time Bellman-residual update.
+z2_bar_dot_hat = F_hat + C*delta + O2;
+instant_cost = z2_bar'*Q2*z2_bar + r*delta^2;
+bellman_error = instant_cost + grad_J_critic'*z2_bar_dot_hat;
+critic_regressor = dphi_dz2*z2_bar_dot_hat;
+critic_normalizer = 1 + critic_regressor'*critic_regressor;
+gamma_c = 0.75;
+dWc = -gamma_c*critic_regressor*bellman_error/critic_normalizer^2;
+
+% The actor represents the same value function and tracks the critic.
+gamma_a = 1.0;
+dWa = -gamma_a*(Wa - Wc);
+
+sys = [dWF(:); dWc; dWa; dO2];
 
 function sys = mdlOutputs(t,x,u)
-% 输出计算顺序与导数计算保持一致，Simulink 输出接口保持 3 路。
+[WF,Wc,Wa,O2] = unpackStates(x);
+[~,Z_J,z2_bar,C] = controllerInputs(t,u,O2);
 
-% 神经网络权重
-WF = x(1:7);
-Wc = x(8:14);
-Wa = x(15:21);
-O = x(22);
+[~,dphi_J] = AGV_RBF(Z_J,'J');
+dphi_dz2 = dphi_J(:,3:4);
+grad_J_seed = 0.04*z2_bar;
+r = 2;
+grad_J_actor = grad_J_seed + dphi_dz2'*Wa;
+delta = -(C'*grad_J_actor)/(2*r);
 
-% 输入信号
+u_d = 0.5;
+delta_applied = saturateSteering(delta,u_d);
+weight_norm = norm([WF(:); Wc; Wa]);
+sys = [delta; delta_applied; weight_norm];
+
+function [WF,Wc,Wa,O2] = unpackStates(x)
+WF = reshape(x(1:18),9,2);
+Wc = x(19:27);
+Wa = x(28:36);
+O2 = x(37:38);
+
+function [Z_F,Z_J,z2_bar,C] = controllerInputs(t,u,O2)
+% Existing 13-input Simulink interface:
+% [sigma_y,s2y,s1y,sigma_phi,s2phi,s1phi,e_y,e_phi,...
+%  de_y,de_phi,z2_y,z2_phi,w].
+s1 = [u(3); u(6)];
 e_y = u(7);
 e_phi = u(8);
 de_y = u(9);
 de_phi = u(10);
 z2 = [u(11); u(12)];
 
-X1 = [e_y; e_phi];
-X2 = [de_y; de_phi];
-Z2 = [X1; X2];
+Z_F = [e_y; e_phi; de_y; de_phi];
+z2_bar = z2 - O2;
+Z_J = [s1; z2_bar];
 
-% 车辆参数
 m = 1832;
 Iz = 2488;
 lf = 1.18;
 cf = 80000*(1 + 0.1*sin(0.01*t));
+C = [cf/m; lf*cf/Iz];
 
-c_y = cf/m;
-c_phi = lf*cf/Iz;
-C = [c_y; c_phi];
-
-% RBFNN 与最终控制律
-phi = AGV_RBF(Z2);
-P = diag([3, 1]);
-C_gain = sqrt(C'*P*C);
-z2_control = C'*P*z2/C_gain - O;
-
-F_hat = WF'*phi;
-actor_term = Wa'*phi;
-
-c2 = 30;
-delta = (-c2*z2_control - F_hat - 0.5*actor_term)/C_gain;
-
-% Keep the hard actuator limit used by the vehicle model.
-u_d = 0.5;
+function delta_applied = saturateSteering(delta,u_d)
 if abs(delta) > u_d
-    delta_sat = u_d*sign(delta);
+    delta_applied = u_d*sign(delta);
 else
-    delta_sat = delta;
+    delta_applied = delta;
 end
-
-% 输出全部神经网络权重范数，用于观察整体权重变化。
-weight_norm = norm([WF; Wc; Wa]);
-sys = [delta; delta_sat; weight_norm];
