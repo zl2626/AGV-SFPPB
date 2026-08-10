@@ -1,7 +1,6 @@
 function report = AGV_diagnose(stop_time, make_plots)
 %AGV_DIAGNOSE Reconstruct Identifier and Critic diagnostics offline.
-%   report = AGV_diagnose() runs the model only up to the last safe point
-%   before the current SFPPB singularity and reports:
+%   report = AGV_diagnose() runs the complete 20 s benchmark and reports:
 %       |F_true - F_hat|, ||omega_c||, two Bellman residuals, and both
 %       critic rates.
 %   The model configuration is changed only in memory and is not saved.
@@ -12,7 +11,7 @@ function report = AGV_diagnose(stop_time, make_plots)
 %   Identifier state model.
 
 if nargin < 1
-    stop_time = 1.8945;
+    stop_time = 20;
 end
 if nargin < 2
     make_plots = true;
@@ -40,6 +39,7 @@ ctrl_states = ctrl_timeseries.Data;
 z2 = [simulation.z2y(:), simulation.z2phi(:)];
 s1 = [simulation.s1y(:), simulation.s1phi(:)];
 delta = simulation.delta(:);
+delta_applied = simulation.delta1(:);
 O2 = ctrl_states(:, 37:38);
 n = numel(t);
 
@@ -50,6 +50,7 @@ omega = zeros(n, 1);
 epsilon_hat = zeros(n, 1);
 critic_rate_squared = zeros(n, 1);
 critic_rate_single = zeros(n, 1);
+critic_rate_actual = zeros(n, 1);
 s1_dot_history = zeros(n, 2);
 value_gradient = zeros(n, 4);
 instant_cost_history = zeros(n, 1);
@@ -79,7 +80,12 @@ for k = 1:n
     z2_bar_dot_hat = F_hat(k, :).'+C*delta(k)+O2(k, :).';
     X_H_dot = [s1_dot; z2_bar_dot_hat];
 
-    grad_J_critic = [0; 0; 0.04*z2_bar] + dphi_J'*Wc;
+    s1_now = s1(k, :).';
+    k0 = 0.04;
+    seed_weight = 1 + s1_now.^2;
+    grad_s1_seed = k0*s1_now.*(z2_bar.^2);
+    grad_z2_seed = k0*seed_weight.*z2_bar;
+    grad_J_critic = [grad_s1_seed; grad_z2_seed] + dphi_J'*Wc;
     value_gradient(k, :) = grad_J_critic.';
     instant_cost = s1(k, :)*s1(k, :).'+z2_bar'*z2_bar+2*delta(k)^2;
     instant_cost_history(k) = instant_cost;
@@ -91,6 +97,8 @@ for k = 1:n
         /normalizer^2);
     critic_rate_single(k) = norm(-0.75*critic_regressor*epsilon_hat(k) ...
         /normalizer);
+    critic_rate_actual(k) = norm(-0.005*critic_regressor*epsilon_hat(k) ...
+        /normalizer - 0.0005*Wc);
 end
 
 z2_bar = z2-O2;
@@ -134,9 +142,29 @@ report.epsilon_gap_relative = report.epsilon_gap_rms ...
     /max(report.epsilon_hat_rms, eps);
 report.critic_rate_squared = critic_rate_squared;
 report.critic_rate_single = critic_rate_single;
+report.critic_rate_actual = critic_rate_actual;
 report.sigma = sigma;
+report.min_margin_y = min([simulation.e_y(:)-simulation.eyl(:); ...
+    simulation.eyu(:)-simulation.e_y(:)]);
+report.min_margin_phi = min([simulation.e_phi(:)-simulation.ephil(:); ...
+    simulation.ephiu(:)-simulation.e_phi(:)]);
+report.max_delta = max(abs(delta));
+report.max_delta_applied = max(abs(delta_applied));
+report.max_saturation_gap = max(abs(delta-delta_applied));
+report.max_O2 = max(vecnorm(O2,2,2));
+report.Wc_end_norm = norm(ctrl_states(end,19:27));
+Wa0 = [-14.9071198*0.03, -102.062194*0.005, ...
+    -1.56893982*0.5, -0.718999721*0.2, zeros(1,5)];
+report.Wa_move = norm(ctrl_states(end,28:36)-Wa0);
+report.final_error = [simulation.e_y(end),simulation.e_phi(end)];
 
 fprintf('AGV diagnostic stop time: %.9f s\n', t(end));
+fprintf('minimum SFPPB margins [y, phi] = [%.9g, %.9g]\n', ...
+    report.min_margin_y,report.min_margin_phi);
+fprintf('max |delta| / |applied| / saturation gap = %.9g / %.9g / %.9g\n', ...
+    report.max_delta,report.max_delta_applied,report.max_saturation_gap);
+fprintf('max ||O2|| = %.9g, end ||Wc|| = %.9g, Actor move = %.9g\n', ...
+    report.max_O2,report.Wc_end_norm,report.Wa_move);
 fprintf('F_hat(end)  = [% .9g, % .9g]\n', F_hat(end, 1), F_hat(end, 2));
 fprintf('F_true(end, one-sided raw) = [% .9g, % .9g]\n', ...
     F_true(end, 1), F_true(end, 2));
@@ -159,10 +187,14 @@ fprintf('max ||dWc||, squared normalization = %.9g\n', ...
     max(critic_rate_squared));
 fprintf('max ||dWc||, single normalization = %.9g\n', ...
     max(critic_rate_single));
+fprintf('max ||dWc||, active safe rate = %.9g\n', ...
+    max(critic_rate_actual));
 fprintf('end ||dWc||, squared normalization = %.9g\n', ...
     critic_rate_squared(end));
 fprintf('end ||dWc||, single normalization = %.9g\n', ...
     critic_rate_single(end));
+fprintf('end ||dWc||, active safe rate = %.9g\n', ...
+    critic_rate_actual(end));
 
 if make_plots
     figure('Name', 'AGV Bellman residual diagnostics', 'Color', 'w');
