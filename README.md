@@ -159,6 +159,7 @@ z2_bar = z2-O2
 | `assist1.m` | 原输入约束辅助 S-Function |
 | `AGV_simulate.slx` | 保持不变的 Simulink 模型 |
 | `AGV_plot.m` | 仿真结果绘图脚本 |
+| `AGV_diagnose.m` | Identifier 与双 Bellman residual 离线诊断脚本 |
 
 ## Critic normalization 诊断结果
 
@@ -167,19 +168,37 @@ z2_bar = z2-O2
 诊断采用仿真保存的完整 S-Function 状态，离线重构
 
 ```text
-F_true = d(z2-O2)/dt - C*delta_applied - O2
+F_true = d(z2-O2)/dt - C*delta - O2
 ```
 
-平方归一化基线在 `t=1.8945 s` 的结果为：
+这里必须使用控制器命令 `delta`，而不是饱和后的 `delta_applied`；两者在当前未触发饱和的实验中相同，但进入饱和后只有上式与 `O2_dot=-O2+C*(delta_applied-delta)` 一致。
 
-- `F_hat = [0.04738, -0.04885]`
-- `F_true = [-0.76773, -0.27967]`
-- `|F_true-F_hat| = [0.81511, 0.23081]`，末端范数约 `0.84715`
-- 整个诊断窗口 Identifier 残差范数 RMS 约 `0.79716`，最大约 `3.686`
-- `||omega_c|| = 504.86`，`|epsilon_H| = 276.36`
+为了降低 `gradient` 首尾单边差分的影响，统计窗口限定为 `t>0.02 s` 且 `t<t_end-0.01 s`。平方归一化基线在 `t_end=1.8945 s` 的结果为：
+
+- 有效窗口 Identifier 残差范数 RMS 约 `0.77028`，最大约 `3.686`
+- 原始末端的 `F_hat=[0.04738,-0.04885]`、`F_true=[-0.76773,-0.27967]` 仅保留为单边差分参考，不作为主要评价指标
+- `||omega_c||` 最大约 `504.86`
 - 临界点 `||dWc||`：平方归一化约 `1.61e-6`，单次归一化约 `0.41055`
 
-这说明 Identifier 不是完全失效，但 y 通道在临界点的估计存在明显偏差。因此单次归一化只作为受控失败对照，不作为主线控制律：
+诊断脚本现在同时计算两套 Bellman residual：
+
+```text
+epsilon_hat  = L + grad(Jc)'*[s1_dot; F_hat+C*delta+O2]
+epsilon_data = L + grad(Jc)'*[s1_dot; d(z2-O2)/dt]
+```
+
+有效窗口的比较结果为：
+
+- `RMS(|epsilon_hat|) = 32.39495`
+- `RMS(|epsilon_data|) = 32.39869`
+- `RMS(|epsilon_hat-epsilon_data|) = 0.043685`
+- residual 差值只占 `epsilon_hat` RMS 的约 `0.13485%`，最大绝对差约 `0.086313`
+
+因此 Identifier 的点对点动力学误差虽然明显，但沿当前值函数梯度投影后，对 Bellman residual 的影响很小。现阶段应优先研究 SFPPB 奇异尺度进入 `s1_dot` 和 `omega_c` 后造成的 Critic 数值条件问题，而不是立即扩充 Identifier。
+
+`AGV_diagnose()` 默认绘制 `epsilon_hat`、`epsilon_data` 及其差值曲线；自动检查时可用 `AGV_diagnose(1.8945,false)` 禁用绘图。
+
+单次归一化仍只作为受控失败对照，不作为主线控制律：
 
 ```matlab
 % A: baseline
@@ -191,5 +210,5 @@ dWc = -gamma_c*critic_regressor*bellman_error/critic_normalizer;
 
 B 方案在安全窗口 `t=0.3 s` 已将最大 Critic 更新范数从约 `0.134` 放大到约 `0.703`，继续仿真时在约 `t=0.339474 s` 触发求解器困难并导致 `AGV_transfor` 输出异常；它没有改善稳定性。因此当前 `main` 已恢复 A 方案，20 s 仿真仍在约 `1.8949 s` 失败。
 
-当前结论是：Critic 平方归一化确实存在近边界冻结，但简单删除一个平方又过于激进；下一步应研究与 SFPPB 奇异尺度匹配的有界/分层归一化，并在此之前改进 Identifier 估计质量。当前不应调学习率、扩 Identifier、修改 `AGV_transfor.m` 或改变 Simulink 接口。
+当前结论是：Critic 平方归一化确实存在近边界冻结，但简单删除一个平方又过于激进；下一步应研究数值条件更好的 SFPPB/HJB 状态坐标或有界 regressor，而不是继续搜索归一化指数。当前不应调学习率、扩 Identifier、修改 Actor、修改 `AGV_transfor.m` 或改变 Simulink 接口。
 
