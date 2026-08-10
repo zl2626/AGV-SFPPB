@@ -27,7 +27,7 @@ delta_admissible = ctrl_diagnostics(:,9);
 delta_RL = ctrl_diagnostics(:,10);
 delta_safety_correction = ctrl_diagnostics(:,11);
 
-output_dir = fullfile(fileparts(mfilename('fullpath')),'Fig','paper');
+output_dir = fullfile(fileparts(mfilename('fullpath')),'png');
 if ~exist(output_dir,'dir')
     mkdir(output_dir);
 end
@@ -443,8 +443,6 @@ legend(ax,{s_label,z_label},'Interpreter','latex','FontSize',11, ...
 end
 
 function exportFigure(fig,output_dir,file_stem)
-exportgraphics(fig,fullfile(output_dir,[file_stem '.pdf']), ...
-    'ContentType','vector');
 exportgraphics(fig,fullfile(output_dir,[file_stem '.png']), ...
     'Resolution',600);
 end

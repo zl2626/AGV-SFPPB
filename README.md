@@ -248,7 +248,7 @@ report = AGV_diagnose(20,false,100,true,true,0.25,0.5);
 8. `0.50--0.30 rad` 执行器可行能力边界；
 9. 附录 `s,z` 诊断图。
 
-输出目录为 `Fig/paper/`。
+全部图片以 600 dpi PNG 格式输出到项目根目录的 `png/` 文件夹。
 
 ## 历史问题定位
 
