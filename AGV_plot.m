@@ -206,8 +206,66 @@ legend(ax,{'Requested','Applied','$\pm0.4$ rad'}, ...
     'Orientation','horizontal','NumColumns',3,'Box','off');
 exportFigure(fig,output_dir,'Fig7_saturation_stress');
 
-%% Fig. A1: transformed-state diagnostics for the appendix
+%% Fig. 8: actuator-feasibility envelope with all controller gains frozen
+[actuator_limits,envelope] = actuatorEnvelopeSweep(t(end));
 fig = figure(8);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,12.0]);
+tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+
+ax = nexttile;
+hold(ax,'on');
+plot(ax,actuator_limits,envelope.flexible_margin,'b-o', ...
+    'LineWidth',2.0,'MarkerSize',5,'MarkerFaceColor','w');
+plot(ax,actuator_limits,envelope.nominal_margin,'r--s', ...
+    'LineWidth',1.8,'MarkerSize',5,'MarkerFaceColor','w');
+yline(ax,0,'k:','LineWidth',1.3);
+plot(ax,actuator_limits(~envelope.success), ...
+    zeros(sum(~envelope.success),1),'kx','LineWidth',1.8, ...
+    'MarkerSize',8,'HandleVisibility','off');
+hold(ax,'off');
+formatEnvelopeAxes(ax,actuator_limits,[-2.1,0.4]);
+ylabel(ax,'$m_{\min}$','Interpreter','latex','FontSize',14);
+legend(ax,{'Flexible SFPPB','Nominal PPB','Safety boundary'}, ...
+    'Interpreter','latex','FontSize',10,'Location','northoutside', ...
+    'Orientation','horizontal','NumColumns',3,'Box','off');
+
+ax = nexttile;
+yyaxis(ax,'left');
+plot(ax,actuator_limits,envelope.saturation_ratio,'b-o', ...
+    'LineWidth',2.0,'MarkerSize',5,'MarkerFaceColor','w');
+ylabel(ax,'Saturation (\%)','Interpreter','latex','FontSize',14);
+ylim(ax,[0,7.2]);
+yyaxis(ax,'right');
+plot(ax,actuator_limits,envelope.max_eta,'r--s', ...
+    'LineWidth',1.8,'MarkerSize',5,'MarkerFaceColor','w');
+ylabel(ax,'$\max|\eta|$','Interpreter','latex','FontSize',14);
+ylim(ax,[0,0.055]);
+formatEnvelopeAxes(ax,actuator_limits,[]);
+legend(ax,{'Saturation time','$\max|\eta|$'}, ...
+    'Interpreter','latex','FontSize',10,'Location','northwest', ...
+    'Orientation','horizontal','NumColumns',2,'Box','off');
+
+ax = nexttile;
+yyaxis(ax,'left');
+plot(ax,actuator_limits,envelope.max_gap,'b-o', ...
+    'LineWidth',2.0,'MarkerSize',5,'MarkerFaceColor','w');
+ylabel(ax,'Gap (rad)', ...
+    'Interpreter','latex','FontSize',14);
+ylim(ax,[0,0.14]);
+yyaxis(ax,'right');
+plot(ax,actuator_limits,envelope.conflicts,'r--s', ...
+    'LineWidth',1.8,'MarkerSize',5,'MarkerFaceColor','w');
+ylabel(ax,'Conflicts','Interpreter','latex','FontSize',14);
+ylim(ax,[0,9]);
+formatEnvelopeAxes(ax,actuator_limits,[]);
+xlabel(ax,'Actuator limit (rad)','Interpreter','latex','FontSize',14);
+legend(ax,{'Saturation gap','Safety conflicts'}, ...
+    'Interpreter','latex','FontSize',10,'Location','northwest', ...
+    'Orientation','horizontal','NumColumns',2,'Box','off');
+exportFigure(fig,output_dir,'Fig8_actuator_envelope');
+
+%% Fig. A1: transformed-state diagnostics for the appendix
+fig = figure(9);
 set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,12.0]);
 tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
 
@@ -267,6 +325,59 @@ out_case = sim(model,'StopTime',num2str(stop_time,16), ...
 clear restore_parameters;
 end
 
+function [limits,data] = actuatorEnvelopeSweep(stop_time)
+limits = (0.30:0.025:0.50).';
+n = numel(limits);
+data.success = false(n,1);
+data.flexible_margin = nan(n,1);
+data.nominal_margin = nan(n,1);
+data.saturation_ratio = nan(n,1);
+data.conflicts = nan(n,1);
+data.max_eta = nan(n,1);
+data.max_gap = nan(n,1);
+
+for k = 1:n
+    actuator_limit = limits(k);
+    controller_parameters = sprintf( ...
+        '100,1,1,0.25,%.16g',actuator_limit);
+    try
+        out_case = simulateControllerCase( ...
+            controller_parameters,actuator_limit,stop_time);
+    catch
+        continue;
+    end
+
+    t_case = out_case.t(:);
+    diagnostics = out_case.ctrl_diagnostics;
+    requested = diagnostics(:,1);
+    applied = diagnostics(:,2);
+    data.flexible_margin(k) = min([ ...
+        min(out_case.e_y(:)-out_case.eyl(:))/0.03; ...
+        min(out_case.eyu(:)-out_case.e_y(:))/0.03; ...
+        min(out_case.e_phi(:)-out_case.ephil(:))/0.005; ...
+        min(out_case.ephiu(:)-out_case.e_phi(:))/0.005]);
+    data.nominal_margin(k) = min([ ...
+        min(out_case.e_y(:)-out_case.eyu_(:))/0.03; ...
+        min(out_case.eyl_(:)-out_case.e_y(:))/0.03; ...
+        min(out_case.e_phi(:)-out_case.ephiu_(:))/0.005; ...
+        min(out_case.ephil_(:)-out_case.e_phi(:))/0.005]);
+    saturated = abs(requested-applied) > 1e-8;
+    data.saturation_ratio(k) = 100*trapz( ...
+        t_case,double(saturated))/t_case(end);
+    conflict = diagnostics(:,8) > 0.5;
+    data.conflicts(k) = sum(diff([false;conflict]) > 0);
+    relaxation = [out_case.eyu(:)-out_case.eyl_(:), ...
+        out_case.eyu_(:)-out_case.eyl(:), ...
+        out_case.ephiu(:)-out_case.ephil_(:), ...
+        out_case.ephiu_(:)-out_case.ephil(:)];
+    max_relaxation = max(relaxation(:));
+    data.max_eta(k) = atanh(min(max(max_relaxation/0.4,0),1-eps));
+    data.max_gap(k) = max(abs(requested-applied));
+    data.success(k) = t_case(end) >= stop_time-1e-6 ...
+        && data.flexible_margin(k) > 0;
+end
+end
+
 function restoreModelParameters( ...
     controller_block,plant_block,assist_block,parameters)
 set_param(controller_block,'Parameters',parameters{1});
@@ -301,6 +412,23 @@ ax.GridLineStyle = ':';
 ax.GridAlpha = 0.15;
 xlim(ax,[0,t_end]);
 ylim(ax,y_limits);
+end
+
+function formatEnvelopeAxes(ax,limits,y_limits)
+set(ax,'FontName','Times New Roman','FontSize',12,'LineWidth',1.0, ...
+    'TickLabelInterpreter','latex','Box','on','Layer','top');
+ax.Toolbar.Visible = 'off';
+grid(ax,'on');
+ax.GridLineStyle = ':';
+ax.GridAlpha = 0.15;
+xlim(ax,[limits(1)-0.005,limits(end)+0.005]);
+xticks(ax,limits(1:2:end));
+for axis_index = 1:numel(ax.YAxis)
+    ax.YAxis(axis_index).Color = 'k';
+end
+if ~isempty(y_limits)
+    ylim(ax,y_limits);
+end
 end
 
 function plotDiagnosticPair(ax,t,s,z,s_label,z_label,y_limits)

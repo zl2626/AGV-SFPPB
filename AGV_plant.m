@@ -1,6 +1,22 @@
-function [sys,x0,str,ts] = AGV_plant(t,x,u,flag,actuator_limit)
+function [sys,x0,str,ts] = AGV_plant( ...
+    t,x,u,flag,actuator_limit,m_scale,Iz_scale,cf_scale,cr_scale,vx)
 if nargin < 5 || isempty(actuator_limit)
     actuator_limit = 0.5;
+end
+if nargin < 6 || isempty(m_scale)
+    m_scale = 1;
+end
+if nargin < 7 || isempty(Iz_scale)
+    Iz_scale = 1;
+end
+if nargin < 8 || isempty(cf_scale)
+    cf_scale = 1;
+end
+if nargin < 9 || isempty(cr_scale)
+    cr_scale = 1;
+end
+if nargin < 10 || isempty(vx)
+    vx = 20;
 end
 % Level-1 MATLAB S-Function for AGV plant model
 % 修复版，保持与一级S-Function模块的兼容性
@@ -9,7 +25,8 @@ switch flag
     case 0  % 初始化
         [sys,x0,str,ts] = mdlInitializeSizes;
     case 1  % 连续状态导数
-        sys = mdlDerivatives(t,x,u,actuator_limit);
+        sys = mdlDerivatives(t,x,u,actuator_limit, ...
+            m_scale,Iz_scale,cf_scale,cr_scale,vx);
     case 3  % 输出
         sys = mdlOutputs(t,x,u);
     case 9  % 终止
@@ -34,7 +51,8 @@ str = [];
 ts  = [0 0];  % 连续系统
 
 %% 导数计算函数
-function sys = mdlDerivatives(t,x,u,u_d)
+function sys = mdlDerivatives( ...
+    t,x,u,u_d,m_scale,Iz_scale,cf_scale,cr_scale,vx)
 % 状态解包
 e_y = x(1);    e_phi = x(2);
 de_y = x(3);   de_phi = x(4);
@@ -45,15 +63,14 @@ delta = u(1);
 rho_0 = u(2);
 
 % 车辆物理参数
-m = 1832;
-Iz = 2488;
+m = 1832*m_scale;
+Iz = 2488*Iz_scale;
 lf = 1.18;
 lr = 1.77;
-vx = 20;
 
 % 时变轮胎侧偏刚度
-cf_nom = 80000;
-cr_nom = 120000;
+cf_nom = 80000*cf_scale;
+cr_nom = 120000*cr_scale;
 cf = cf_nom * (1 + 0.1*sin(0.01*t));
 cr = cr_nom * (1 + 0.1*sin(0.01*t));
 
