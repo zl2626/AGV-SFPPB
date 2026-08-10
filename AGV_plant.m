@@ -1,4 +1,7 @@
-function [sys,x0,str,ts] = AGV_plant(t,x,u,flag)
+function [sys,x0,str,ts] = AGV_plant(t,x,u,flag,actuator_limit)
+if nargin < 5 || isempty(actuator_limit)
+    actuator_limit = 0.5;
+end
 % Level-1 MATLAB S-Function for AGV plant model
 % 修复版，保持与一级S-Function模块的兼容性
 
@@ -6,7 +9,7 @@ switch flag
     case 0  % 初始化
         [sys,x0,str,ts] = mdlInitializeSizes;
     case 1  % 连续状态导数
-        sys = mdlDerivatives(t,x,u);
+        sys = mdlDerivatives(t,x,u,actuator_limit);
     case 3  % 输出
         sys = mdlOutputs(t,x,u);
     case 9  % 终止
@@ -31,7 +34,7 @@ str = [];
 ts  = [0 0];  % 连续系统
 
 %% 导数计算函数
-function sys = mdlDerivatives(t,x,u)
+function sys = mdlDerivatives(t,x,u,u_d)
 % 状态解包
 e_y = x(1);    e_phi = x(2);
 de_y = x(3);   de_phi = x(4);
@@ -47,7 +50,6 @@ Iz = 2488;
 lf = 1.18;
 lr = 1.77;
 vx = 20;
-u_d = 0.5;
 
 % 时变轮胎侧偏刚度
 cf_nom = 80000;
@@ -107,6 +109,6 @@ domega_z_dt = A21*vy + A22*omega_z + B2*delta_sat;
 sys = [dX_dt(1); dX_dt(2); dX_dt(3); dX_dt(4); dvy_dt; domega_z_dt];
 
 %% 输出函数
-function sys = mdlOutputs(t,x,u)
+function sys = mdlOutputs(~,x,~)
 % 输出所有状态
 sys = x;

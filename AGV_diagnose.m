@@ -1,12 +1,14 @@
 function report = AGV_diagnose( ...
-    stop_time,make_plots,safety_lambda,learning_enabled,filter_gated_actor,control_weight)
+    stop_time,make_plots,safety_lambda,learning_enabled, ...
+    filter_gated_actor,control_weight,actuator_limit)
 %AGV_DIAGNOSE Reconstruct Identifier and Critic diagnostics offline.
 %   report = AGV_diagnose() runs the complete 20 s benchmark and reports:
 %       |F_true - F_hat|, ||omega_c||, two Bellman residuals, and both
 %       critic rates.
-%   The optional third through sixth inputs set the safety-filter lambda,
+%   The optional third through seventh inputs set the safety-filter lambda,
 %   enable or freeze all weight updates, gate the Hamiltonian Actor update
-%   while the safety projection is active, and set the input-cost weight r.
+%   while the safety projection is active, set the normalized input-cost
+%   weight r, and set the physical steering limit.
 %   The model configuration is changed only in memory and is not saved.
 %
 %   F_true is reconstructed from the logged z2 trajectory:
@@ -30,17 +32,24 @@ if nargin < 5
     filter_gated_actor = true;
 end
 if nargin < 6
-    control_weight = 1;
+    control_weight = 0.25;
+end
+if nargin < 7
+    actuator_limit = 0.5;
 end
 
 model = 'AGV_simulate';
 load_system(model);
 cleanup_model = onCleanup(@() close_system(model, 0));
 controller_block = [model '/S-Function3'];
-controller_parameters = sprintf('%.16g,%d,%d,%.16g', ...
+controller_parameters = sprintf('%.16g,%d,%d,%.16g,%.16g', ...
     safety_lambda,logical(learning_enabled),logical(filter_gated_actor), ...
-    control_weight);
+    control_weight,actuator_limit);
 set_param(controller_block,'Parameters',controller_parameters);
+set_param([model '/S-Function'],'Parameters', ...
+    num2str(actuator_limit,16));
+set_param([model '/S-Function4'],'Parameters', ...
+    num2str(actuator_limit,16));
 
 set_param(model, ...
     'StopTime', num2str(stop_time, 16), ...
@@ -64,6 +73,9 @@ delta_applied = simulation.delta1(:);
 ctrl_diagnostics = simulation.ctrl_diagnostics;
 delta_nominal = ctrl_diagnostics(:,4);
 safety_conflict = ctrl_diagnostics(:,8) > 0.5;
+delta_admissible = ctrl_diagnostics(:,9);
+delta_RL = ctrl_diagnostics(:,10);
+delta_safety_correction = ctrl_diagnostics(:,11);
 O2 = ctrl_states(:, 37:38);
 n = numel(t);
 
@@ -106,13 +118,16 @@ for k = 1:n
 
     s1_now = s1(k, :).';
     k0 = 0.04;
-    seed_weight = 1 + s1_now.^2;
     grad_s1_seed = k0*s1_now.*(z2_bar.^2);
-    grad_z2_seed = k0*seed_weight.*z2_bar;
+    R_delta = control_weight/0.5^2;
+    grad_z2_seed = -(2*R_delta*delta_admissible(k) ...
+        /(C'*C))*C;
     grad_J_critic = [grad_s1_seed; grad_z2_seed] + dphi_J'*Wc;
     value_gradient(k, :) = grad_J_critic.';
-    instant_cost = s1(k, :)*s1(k, :).'+z2_bar'*z2_bar ...
-        + control_weight*delta(k)^2;
+    s1_normalized = s1(k, :).'./[2;1.5];
+    z2_normalized = z2_bar./[0.5;0.2];
+    instant_cost = s1_normalized'*s1_normalized ...
+        + z2_normalized'*z2_normalized+R_delta*delta(k)^2;
     instant_cost_history(k) = instant_cost;
     epsilon_hat(k) = instant_cost + grad_J_critic'*X_H_dot;
     critic_regressor = dphi_J*X_H_dot;
@@ -173,6 +188,12 @@ report.min_margin_y = min([simulation.e_y(:)-simulation.eyl(:); ...
     simulation.eyu(:)-simulation.e_y(:)]);
 report.min_margin_phi = min([simulation.e_phi(:)-simulation.ephil(:); ...
     simulation.ephiu(:)-simulation.e_phi(:)]);
+report.min_nominal_margin_y = min([ ...
+    simulation.e_y(:)-simulation.eyu_(:); ...
+    simulation.eyl_(:)-simulation.e_y(:)]);
+report.min_nominal_margin_phi = min([ ...
+    simulation.e_phi(:)-simulation.ephiu_(:); ...
+    simulation.ephil_(:)-simulation.e_phi(:)]);
 report.min_normalized_margin = min( ...
     report.min_margin_y/0.03,report.min_margin_phi/0.005);
 report.max_delta_nominal = max(abs(delta_nominal));
@@ -185,25 +206,50 @@ report.safety_lambda = safety_lambda;
 report.learning_enabled = logical(learning_enabled);
 report.actor_filter_gating = logical(filter_gated_actor);
 report.control_weight = control_weight;
+report.actuator_limit = actuator_limit;
 report.filter_active_ratio = trapz(t,double(filter_active))/duration;
 report.filter_active_time = trapz(t,double(filter_active));
 report.actor_hamiltonian_active_ratio = double(learning_enabled)*(1- ...
     double(filter_gated_actor)*report.filter_active_ratio);
 report.max_filter_correction = max(abs(delta-delta_nominal));
+report.max_delta_admissible = max(abs(delta_admissible));
+report.max_delta_RL = max(abs(delta_RL));
+report.rms_delta_admissible = sqrt( ...
+    trapz(t,delta_admissible.^2)/duration);
+report.rms_delta_RL = sqrt(trapz(t,delta_RL.^2)/duration);
+report.rms_safety_correction = sqrt( ...
+    trapz(t,delta_safety_correction.^2)/duration);
+report.rl_to_admissible_rms = report.rms_delta_RL ...
+    /max(report.rms_delta_admissible,eps);
+report.steering_decomposition_error = max(abs( ...
+    delta_nominal-delta_admissible-delta_RL));
 report.safety_conflict_ratio = trapz(t,double(safety_conflict))/duration;
 report.safety_conflict_count = sum(diff([false;safety_conflict]) > 0);
 report.control_energy = trapz(t,delta_applied.^2);
 report.hjb_state_cost = trapz(t, ...
-    sum(s1.^2,2)+sum(z2_bar.^2,2));
+    sum((s1./[2,1.5]).^2,2)+sum((z2_bar./[0.5,0.2]).^2,2));
+report.hjb_component_cost = [trapz(t,(s1(:,1)/2).^2), ...
+    trapz(t,(s1(:,2)/1.5).^2),trapz(t,(z2_bar(:,1)/0.5).^2), ...
+    trapz(t,(z2_bar(:,2)/0.2).^2)];
 report.hjb_objective = trapz(t,instant_cost_history);
 report.tracking_ISE = [trapz(t,simulation.e_y(:).^2), ...
     trapz(t,simulation.e_phi(:).^2)];
 report.tracking_RMS = sqrt(report.tracking_ISE/duration);
 report.max_O2 = max(vecnorm(O2,2,2));
+% The legacy workspace names with a trailing underscore are reversed:
+% eyu_/ephiu_ carry nominal lower bounds and eyl_/ephil_ upper bounds.
+flexible_relaxation = [simulation.eyu(:)-simulation.eyl_(:), ...
+    simulation.eyu_(:)-simulation.eyl(:), ...
+    simulation.ephiu(:)-simulation.ephil_(:), ...
+    simulation.ephiu_(:)-simulation.ephil(:)];
+report.max_flexible_relaxation = max(flexible_relaxation,[],1);
+flexible_active = max(flexible_relaxation,[],2) > 1e-8;
+report.flexible_active_ratio = trapz(t,double(flexible_active))/duration;
+report.final_flexible_relaxation = flexible_relaxation(end,:);
+report.max_assist_state = max(abs(assist_states(:,1)));
 report.WF_end_norm = norm(ctrl_states(end,1:18));
 report.Wc_end_norm = norm(ctrl_states(end,19:27));
-Wa0 = [-14.9071198*0.03, -102.062194*0.005, ...
-    -1.56893982*0.5, -0.718999721*0.2, zeros(1,5)];
+Wa0 = zeros(1,9);
 report.Wa_end = ctrl_states(end,28:36);
 report.Wa_delta = report.Wa_end-Wa0;
 report.Wa_move = norm(report.Wa_delta);
@@ -215,17 +261,30 @@ fprintf('minimum SFPPB margins [y, phi] = [%.9g, %.9g]\n', ...
 fprintf('max |delta| / |applied| / saturation gap = %.9g / %.9g / %.9g\n', ...
     report.max_delta,report.max_delta_applied,report.max_saturation_gap);
 fprintf(['lambda = %.9g, learning = %d, Actor gate = %d, r = %.9g, ' ...
+    'actuator limit = %.9g, ' ...
     'filter active = %.6g%%, Hamiltonian active = %.6g%%, ' ...
     'max correction = %.9g, conflicts = %d\n'], ...
     report.safety_lambda,report.learning_enabled,report.actor_filter_gating, ...
-    report.control_weight, ...
+    report.control_weight,report.actuator_limit, ...
     100*report.filter_active_ratio, ...
     100*report.actor_hamiltonian_active_ratio, ...
     report.max_filter_correction,report.safety_conflict_count);
 fprintf('control energy = %.9g, max ||O2|| = %.9g\n', ...
     report.control_energy,report.max_O2);
+fprintf(['flexible active = %.6g%%, max relaxation ' ...
+    '[y+,y-,phi+,phi-] ='],100*report.flexible_active_ratio);
+fprintf(' %.9g',report.max_flexible_relaxation);
+fprintf(', max assist = %.9g\n',report.max_assist_state);
+fprintf(['steering RMS admissible / RL / safety correction = ' ...
+    '%.9g / %.9g / %.9g\n'],report.rms_delta_admissible, ...
+    report.rms_delta_RL,report.rms_safety_correction);
+fprintf('RL/admissible RMS ratio = %.6g%%, decomposition error = %.3g\n', ...
+    100*report.rl_to_admissible_rms,report.steering_decomposition_error);
 fprintf('HJB state cost / total objective = %.9g / %.9g\n', ...
     report.hjb_state_cost,report.hjb_objective);
+fprintf('HJB component costs [s1y,s1phi,z2y,z2phi] =');
+fprintf(' %.9g',report.hjb_component_cost);
+fprintf('\n');
 fprintf('tracking RMS [y, phi] = [%.9g, %.9g]\n', ...
     report.tracking_RMS(1),report.tracking_RMS(2));
 fprintf('end ||WF|| / ||Wc|| / ||Wa-Wa0|| = %.9g / %.9g / %.9g\n', ...

@@ -36,16 +36,16 @@ function sys = mdlDerivatives(t,x,u)
 kappa0_y = 0.10;
 kappaT_y = 0.03;
 T_y = 5;
-lambda1_y = 0.15;
-lambda2_y = 0.15;
+lambda1_y = 0.4;
+lambda2_y = 0.4;
 eta_shape_y = 1.0;
 e0_y = -0.10;
 
 kappa0_phi = 0.02;
 kappaT_phi = 0.005;
 T_phi = 5;
-lambda1_phi = 0.03;
-lambda2_phi = 0.03;
+lambda1_phi = 0.4;
+lambda2_phi = 0.4;
 eta_shape_phi = 1.0;
 e0_phi = 0.01;
 
@@ -222,16 +222,16 @@ function sys = mdlOutputs(t,x,u)
 kappa0_y = 0.10;
 kappaT_y = 0.03;
 T_y = 5;
-lambda1_y = 0.15;
-lambda2_y = 0.15;
+lambda1_y = 0.4;
+lambda2_y = 0.4;
 eta_shape_y = 1.0;
 e0_y = -0.10;
 
 kappa0_phi = 0.02;
 kappaT_phi = 0.005;
 T_phi = 5;
-lambda1_phi = 0.03;
-lambda2_phi = 0.03;
+lambda1_phi = 0.4;
+lambda2_phi = 0.4;
 eta_shape_phi = 1.0;
 e0_phi = 0.01;
 

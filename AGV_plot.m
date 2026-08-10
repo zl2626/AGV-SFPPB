@@ -18,13 +18,14 @@ s2y = out.s2y(:);
 z2y = out.z2y(:);
 s2phi = out.s2phi(:);
 z2phi = out.z2phi(:);
-delta_safe = out.delta(:);
 delta_applied = out.delta1(:);
 ctrl_diagnostics = out.ctrl_diagnostics;
-delta_actor = ctrl_diagnostics(:,4);
 WF_norm = ctrl_diagnostics(:,5);
 Wc_norm = ctrl_diagnostics(:,6);
 Wa_move = ctrl_diagnostics(:,7);
+delta_admissible = ctrl_diagnostics(:,9);
+delta_RL = ctrl_diagnostics(:,10);
+delta_safety_correction = ctrl_diagnostics(:,11);
 
 output_dir = fullfile(fileparts(mfilename('fullpath')),'Fig','paper');
 if ~exist(output_dir,'dir')
@@ -61,22 +62,26 @@ legend({'$e_{\varphi}$','SFPPB'},'Interpreter','latex','FontSize',11, ...
     'Location','northeast','Box','off');
 exportFigure(fig,output_dir,'Fig2_error_phi');
 
-%% Fig. 3: Actor command, safety-filtered command, and applied steering
+%% Fig. 3: decomposition of steering authority
 fig = figure(3);
 set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,7.0]);
 hold on;
-h_actor = plot(t,delta_actor,'b-','LineWidth',2.0);
-h_applied = plot(t,delta_applied,'k:','LineWidth',2.2);
-h_safe = plot(t,delta_safe,'r--','LineWidth',1.8);
-h_limit = yline(0.5,'k-.','LineWidth',1.3);
-yline(-0.5,'k-.','LineWidth',1.3,'HandleVisibility','off');
+h_admissible = plot(t,delta_admissible,'b-','LineWidth',2.0);
+h_RL = plot(t,delta_RL,'r--','LineWidth',1.8);
+h_safety = plot(t,delta_safety_correction,'k-.','LineWidth',1.5);
+h_applied = plot(t,delta_applied,'Color',[0.45,0.45,0.45], ...
+    'LineStyle',':','LineWidth',2.0);
+yline(0.5,'Color',[0.45,0.45,0.45],'LineStyle','--', ...
+    'LineWidth',1.0,'HandleVisibility','off');
+yline(-0.5,'Color',[0.45,0.45,0.45],'LineStyle','--', ...
+    'LineWidth',1.0,'HandleVisibility','off');
 hold off;
 formatAxes(gca,t(end),[-0.52,0.52]);
 xlabel('Time (s)','Interpreter','latex','FontSize',14);
 ylabel('$\delta\;(\mathrm{rad})$','Interpreter','latex','FontSize',14);
-legend([h_actor,h_safe,h_applied,h_limit], ...
-    {'$\delta_{\mathrm{Actor}}$','$\delta_{\mathrm{safe}}$', ...
-    '$\delta_{\mathrm{applied}}$','$\pm\delta_{\max}$'}, ...
+legend([h_admissible,h_RL,h_safety,h_applied], ...
+    {'$\delta_{\mathrm{adm}}$','$\delta_{\mathrm{RL}}$', ...
+    '$\Delta\delta_{\mathrm{safety}}$','$\delta_{\mathrm{applied}}$'}, ...
     'Interpreter','latex','FontSize',11,'Location','northoutside', ...
     'Orientation','horizontal','NumColumns',4,'Box','off');
 exportFigure(fig,output_dir,'Fig3_steering_allocation');
@@ -120,8 +125,89 @@ text(ax,0.02,0.92,'(b)','Units','normalized','FontName','Times New Roman', ...
     'FontSize',12,'FontWeight','bold');
 exportFigure(fig,output_dir,'Fig5_vehicle_states');
 
-%% Fig. A1: transformed-state diagnostics for the appendix
+%% Fig. 6: direct online-versus-frozen differences
+[delta_e_y,delta_e_phi,delta_J] = frozenPolicyDifference(out,t);
 fig = figure(6);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,12.0]);
+tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+
+ax = nexttile;
+plot(ax,t,delta_e_y,'b-','LineWidth',2.0);
+yline(ax,0,'r--','LineWidth',1.0);
+formatAxes(ax,t(end),symmetricLimits(delta_e_y));
+ylabel(ax,'$\Delta e_y\;(\mathrm{m})$', ...
+    'Interpreter','latex','FontSize',14);
+
+ax = nexttile;
+plot(ax,t,delta_e_phi,'b-','LineWidth',2.0);
+yline(ax,0,'r--','LineWidth',1.0);
+formatAxes(ax,t(end),symmetricLimits(delta_e_phi));
+ylabel(ax,'$\Delta e_{\varphi}\;(\mathrm{rad})$', ...
+    'Interpreter','latex','FontSize',14);
+
+ax = nexttile;
+plot(ax,t,delta_J,'b-','LineWidth',2.0);
+yline(ax,0,'r--','LineWidth',1.0);
+formatAxes(ax,t(end),dataLimitsWithZero(delta_J));
+xlabel(ax,'Time (s)','Interpreter','latex','FontSize',14);
+ylabel(ax,'$\Delta J(0,t)$','Interpreter','latex','FontSize',14);
+exportFigure(fig,output_dir,'Fig6_online_frozen_difference');
+
+%% Fig. 7: flexible-boundary response under 0.4 rad saturation stress
+out_stress = simulateControllerCase('100,1,1,0.25,0.4',0.4,t(end));
+t_stress = out_stress.t(:);
+fig = figure(7);
+set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,13.0]);
+tiledlayout(3,1,'TileSpacing','compact','Padding','compact');
+
+ax = nexttile;
+hold(ax,'on');
+h_error = plot(ax,t_stress,out_stress.e_y(:),'b-','LineWidth',2.0);
+h_flexible = plot(ax,t_stress,out_stress.eyu(:),'r--','LineWidth',1.8);
+plot(ax,t_stress,out_stress.eyl(:),'r--','LineWidth',1.8, ...
+    'HandleVisibility','off');
+h_nominal = plot(ax,t_stress,out_stress.eyl_(:),'k:', ...
+    'LineWidth',1.5);
+plot(ax,t_stress,out_stress.eyu_(:),'k:','LineWidth',1.5, ...
+    'HandleVisibility','off');
+hold(ax,'off');
+formatAxes(ax,t(end),[-0.22,0.06]);
+ylabel(ax,'$e_y\;(\mathrm{m})$','Interpreter','latex','FontSize',14);
+legend(ax,[h_error,h_flexible,h_nominal], ...
+    {'Error','Flexible boundary','Nominal boundary'}, ...
+    'Interpreter','latex','FontSize',10,'Location','northoutside', ...
+    'Orientation','horizontal','NumColumns',3,'Box','off');
+
+ax = nexttile;
+hold(ax,'on');
+plot(ax,t_stress,out_stress.e_phi(:),'b-','LineWidth',2.0);
+plot(ax,t_stress,out_stress.ephiu(:),'r--','LineWidth',1.8);
+plot(ax,t_stress,out_stress.ephil(:),'r--','LineWidth',1.8);
+plot(ax,t_stress,out_stress.ephil_(:),'k:','LineWidth',1.5);
+plot(ax,t_stress,out_stress.ephiu_(:),'k:','LineWidth',1.5);
+hold(ax,'off');
+formatAxes(ax,t(end),[-0.025,0.04]);
+ylabel(ax,'$e_{\varphi}\;(\mathrm{rad})$', ...
+    'Interpreter','latex','FontSize',14);
+
+ax = nexttile;
+hold(ax,'on');
+plot(ax,t_stress,out_stress.delta(:),'b-','LineWidth',2.0);
+plot(ax,t_stress,out_stress.delta1(:),'r--','LineWidth',1.8);
+yline(ax,0.4,'k:','LineWidth',1.3);
+yline(ax,-0.4,'k:','LineWidth',1.3,'HandleVisibility','off');
+hold(ax,'off');
+formatAxes(ax,t(end),[-0.52,0.52]);
+xlabel(ax,'Time (s)','Interpreter','latex','FontSize',14);
+ylabel(ax,'$\delta\;(\mathrm{rad})$', ...
+    'Interpreter','latex','FontSize',14);
+legend(ax,{'Requested','Applied','$\pm0.4$ rad'}, ...
+    'Interpreter','latex','FontSize',10,'Location','northoutside', ...
+    'Orientation','horizontal','NumColumns',3,'Box','off');
+exportFigure(fig,output_dir,'Fig7_saturation_stress');
+
+%% Fig. A1: transformed-state diagnostics for the appendix
+fig = figure(8);
 set(fig,'Color','w','Units','centimeters','Position',[2,2,17.8,12.0]);
 tiledlayout(2,2,'TileSpacing','compact','Padding','compact');
 
@@ -138,6 +224,73 @@ plotDiagnosticPair(ax,t,s2phi,z2phi,'$s_{2\varphi}$', ...
     '$z_{2\varphi}$',[-0.28,0.25]);
 xlabel(ax,'Time (s)','Interpreter','latex','FontSize',14);
 exportFigure(fig,output_dir,'FigA1_transformed_states');
+
+function [delta_e_y,delta_e_phi,delta_J] = frozenPolicyDifference(out,t)
+out_frozen = simulateControllerCase( ...
+    '100,0,1,0.25,0.5',0.5,t(end));
+
+t_frozen = out_frozen.t(:);
+delta_e_y = out.e_y(:)-interp1( ...
+    t_frozen,out_frozen.e_y(:),t,'linear');
+delta_e_phi = out.e_phi(:)-interp1( ...
+    t_frozen,out_frozen.e_phi(:),t,'linear');
+
+L_online = (out.s1y(:)/2).^2+(out.s1phi(:)/1.5).^2 ...
+    + (out.z2y(:)/0.5).^2+(out.z2phi(:)/0.2).^2 ...
+    + out.delta1(:).^2;
+L_frozen = (out_frozen.s1y(:)/2).^2 ...
+    + (out_frozen.s1phi(:)/1.5).^2 ...
+    + (out_frozen.z2y(:)/0.5).^2 ...
+    + (out_frozen.z2phi(:)/0.2).^2 ...
+    + out_frozen.delta1(:).^2;
+L_frozen = interp1(t_frozen,L_frozen,t,'linear');
+delta_J = cumtrapz(t,L_online-L_frozen);
+end
+
+function out_case = simulateControllerCase( ...
+    controller_parameters,actuator_limit,stop_time)
+model = 'AGV_simulate';
+load_system(model);
+controller_block = [model '/S-Function3'];
+plant_block = [model '/S-Function'];
+assist_block = [model '/S-Function4'];
+original_parameters = {get_param(controller_block,'Parameters'), ...
+    get_param(plant_block,'Parameters'), ...
+    get_param(assist_block,'Parameters')};
+restore_parameters = onCleanup(@() restoreModelParameters( ...
+    controller_block,plant_block,assist_block,original_parameters));
+set_param(controller_block,'Parameters',controller_parameters);
+set_param(plant_block,'Parameters',num2str(actuator_limit,16));
+set_param(assist_block,'Parameters',num2str(actuator_limit,16));
+out_case = sim(model,'StopTime',num2str(stop_time,16), ...
+    'ReturnWorkspaceOutputs','on');
+clear restore_parameters;
+end
+
+function restoreModelParameters( ...
+    controller_block,plant_block,assist_block,parameters)
+set_param(controller_block,'Parameters',parameters{1});
+set_param(plant_block,'Parameters',parameters{2});
+set_param(assist_block,'Parameters',parameters{3});
+end
+
+function limits = symmetricLimits(signal)
+limit = 1.08*max(abs(signal));
+if limit <= eps
+    limit = 1;
+end
+limits = [-limit,limit];
+end
+
+function limits = dataLimitsWithZero(signal)
+lower = min([signal;0]);
+upper = max([signal;0]);
+span = upper-lower;
+if span <= eps
+    span = 1;
+end
+limits = [lower-0.08*span,upper+0.08*span];
+end
 
 function formatAxes(ax,t_end,y_limits)
 set(ax,'FontName','Times New Roman','FontSize',12,'LineWidth',1.0, ...

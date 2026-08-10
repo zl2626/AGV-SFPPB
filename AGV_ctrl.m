@@ -1,6 +1,7 @@
 function [sys,x0,str,ts] = AGV_ctrl( ...
-    t,x,u,flag,safety_lambda,learning_enabled,filter_gated_actor,control_weight)
-% The final four inputs are Level-1 S-Function parameters.
+    t,x,u,flag,safety_lambda,learning_enabled,filter_gated_actor, ...
+    control_weight,actuator_limit)
+% The final five inputs are Level-1 S-Function parameters.
 if nargin < 5 || isempty(safety_lambda)
     safety_lambda = 100;
 end
@@ -11,16 +12,21 @@ if nargin < 7 || isempty(filter_gated_actor)
     filter_gated_actor = true;
 end
 if nargin < 8 || isempty(control_weight)
-    control_weight = 1;
+    control_weight = 0.25;
+end
+if nargin < 9 || isempty(actuator_limit)
+    actuator_limit = 0.5;
 end
 switch flag
 case 0
     [sys,x0,str,ts] = mdlInitializeSizes;
 case 1
     sys = mdlDerivatives( ...
-        t,x,u,safety_lambda,learning_enabled,filter_gated_actor,control_weight);
+        t,x,u,safety_lambda,learning_enabled,filter_gated_actor, ...
+        control_weight,actuator_limit);
 case 3
-    sys = mdlOutputs(t,x,u,safety_lambda);
+    sys = mdlOutputs( ...
+        t,x,u,safety_lambda,control_weight,actuator_limit);
 case {2,4,9}
     sys = [];
 otherwise
@@ -31,7 +37,7 @@ function [sys,x0,str,ts] = mdlInitializeSizes
 sizes = simsizes;
 sizes.NumContStates  = 38;
 sizes.NumDiscStates  = 0;
-sizes.NumOutputs     = 8;
+sizes.NumOutputs     = 11;
 sizes.NumInputs      = 13;
 sizes.DirFeedthrough = 1;
 sizes.NumSampleTimes = 1;
@@ -40,14 +46,15 @@ sys = simsizes(sizes);
 % [WF(9x2); Wc(9); Wa(9); O2(2)]
 WF0 = zeros(9,2);
 Wc0 = zeros(9,1);
-Wa0 = admissibleActorWeights;
+Wa0 = zeros(9,1);
 O20 = zeros(2,1);
 x0 = [WF0(:); Wc0; Wa0; O20];
 str = [];
 ts = [0 0];
 
 function sys = mdlDerivatives( ...
-    t,x,u,safety_lambda,learning_enabled,filter_gated_actor,control_weight)
+    t,x,u,safety_lambda,learning_enabled,filter_gated_actor, ...
+    control_weight,actuator_limit)
 [WF,Wc,Wa,O2] = unpackStates(x);
 [Z_F,Z_J,z2_bar,C] = controllerInputs(t,u,O2);
 
@@ -58,30 +65,30 @@ sigma_F = 2.0;
 dWF = Gamma_F*(phi_F*z2_bar' - sigma_F*WF);
 F_hat = WF'*phi_F;
 
-% Critic: approximate one scalar value function and obtain its
-% two-dimensional z2 gradient analytically.
+% Critic and Actor share the centered value-function basis and its
+% analytical gradient with respect to X_H = [s1; z2_bar].
 [~,dphi_J] = AGV_RBF(Z_J,'J');
-% SFPPB barrier-conditioned positive seed value:
-% J0 = 0.5*k0*sum((1+s1_i^2)*z2_bar_i^2).
-% A channel approaching its performance boundary therefore dominates the
-% single steering allocation without a fixed projection matrix.
 s1 = Z_J(1:2);
-k0 = 0.04;
-seed_weight = 1 + s1.^2;
-grad_s1_seed = k0*s1.*(z2_bar.^2);
-grad_z2_seed = k0*seed_weight.*z2_bar;
-Q1 = eye(2);
-Q2 = eye(2);
 r = control_weight;
+u_d = actuator_limit;
+delta_scale = 0.5;
+s1_scale = [2; 1.5];
+z2_scale = [0.5; 0.2];
+Q1 = diag(1./s1_scale.^2);
+Q2 = diag(1./z2_scale.^2);
+R_delta = r/delta_scale^2;
 
-grad_J_critic = [grad_s1_seed; grad_z2_seed] + dphi_J'*Wc;
-psi_actor = actorFeatures(Z_F,Z_J);
-delta_nominal = Wa'*psi_actor;
+delta_admissible = admissiblePolicy(Z_F);
+grad_J_admissible = admissibleValueGradient( ...
+    Z_J,C,delta_admissible,R_delta);
+grad_J_critic = grad_J_admissible + dphi_J'*Wc;
+grad_J_actor = grad_J_admissible + dphi_J'*Wa;
+psi_actor = -(dphi_J(:,3:4)*C)/(2*R_delta);
+delta_nominal = -(C'*grad_J_actor(3:4))/(2*R_delta);
 [delta,~] = sfppbSafetyFilter(t,Z_F,delta_nominal,C,safety_lambda);
 
 % The vector auxiliary state exactly uses the steering signal applied to
 % the vehicle, so z2_bar = z2 - O2 removes the saturation mismatch.
-u_d = 0.5;
 delta_applied = saturateSteering(delta,u_d);
 dO2 = -O2 + C*(delta_applied - delta);
 
@@ -92,7 +99,8 @@ C1 = diag([2, 22]);
 s1_dot = -C1*s1 + D1*Sigma*(z2_bar + O2);
 z2_bar_dot_hat = F_hat + C*delta + O2;
 X_H_dot = [s1_dot; z2_bar_dot_hat];
-instant_cost = s1'*Q1*s1 + z2_bar'*Q2*z2_bar + r*delta^2;
+instant_cost = s1'*Q1*s1 + z2_bar'*Q2*z2_bar ...
+    + R_delta*delta^2;
 bellman_error = instant_cost + grad_J_critic'*X_H_dot;
 critic_regressor = dphi_J*X_H_dot;
 critic_normalizer = 1 + critic_regressor'*critic_regressor;
@@ -101,22 +109,21 @@ sigma_c = 0.0005;
 dWc = -gamma_c*critic_regressor*bellman_error/critic_normalizer ...
     - sigma_c*Wc;
 
-% Direct policy Actor. The initial admissible policy is encoded in Wa0;
-% there is no separately summed baseline/residual control law.
-hamiltonian_gradient = 2*r*delta_nominal ...
+% Value-gradient Actor. Wa learns a residual value function over the same
+% basis as the Critic, and the policy follows directly from the HJB
+% stationary condition delta = -(1/(2r))*C'*grad_z2(Ja).
+hamiltonian_gradient = 2*R_delta*delta_nominal ...
     + C'*grad_J_critic(3:4);
 gamma_a = 0.001;
 sigma_a = 0.02;
 dWa_hamiltonian = -gamma_a*psi_actor*hamiltonian_gradient ...
-    /(1 + psi_actor'*psi_actor);
-% Keep the zero-state steering offset anchored to the admissible policy.
-% The physical-state and barrier features retain online adaptation.
-dWa_hamiltonian(end) = 0;
+    /(1 + psi_actor'*psi_actor) ...
+    - gamma_a*(Wa-Wc);
 filter_active = abs(delta-delta_nominal) > 1e-8;
 if filter_gated_actor && filter_active
     dWa_hamiltonian = zeros(size(Wa));
 end
-dWa = dWa_hamiltonian - sigma_a*(Wa - admissibleActorWeights);
+dWa = dWa_hamiltonian - sigma_a*Wa;
 
 if ~learning_enabled
     dWF = zeros(size(dWF));
@@ -126,25 +133,36 @@ end
 
 sys = [dWF(:); dWc; dWa; dO2];
 
-function sys = mdlOutputs(t,x,u,safety_lambda)
+function sys = mdlOutputs( ...
+    t,x,u,safety_lambda,control_weight,actuator_limit)
 [WF,Wc,Wa,O2] = unpackStates(x);
 [Z_F,Z_J,~,C] = controllerInputs(t,u,O2);
 
-psi_actor = actorFeatures(Z_F,Z_J);
-delta_nominal = Wa'*psi_actor;
+[~,dphi_J] = AGV_RBF(Z_J,'J');
+delta_admissible = admissiblePolicy(Z_F);
+u_d = actuator_limit;
+delta_scale = 0.5;
+R_delta = control_weight/delta_scale^2;
+grad_J_admissible = admissibleValueGradient( ...
+    Z_J,C,delta_admissible,R_delta);
+grad_J_actor = grad_J_admissible + dphi_J'*Wa;
+delta_nominal = -(C'*grad_J_actor(3:4))/(2*R_delta);
 [delta,safety_conflict] = sfppbSafetyFilter( ...
     t,Z_F,delta_nominal,C,safety_lambda);
 
-u_d = 0.5;
 delta_applied = saturateSteering(delta,u_d);
 weight_norm = norm([WF(:); Wc; Wa]);
 WF_norm = norm(WF(:));
 Wc_norm = norm(Wc);
-Wa_move = norm(Wa - admissibleActorWeights);
+Wa_move = norm(Wa);
+delta_RL = delta_nominal-delta_admissible;
+delta_safety_correction = delta-delta_nominal;
 % First three outputs preserve the original Simulink signal order. The
-% remaining outputs are diagnostic logs only.
+% remaining outputs are diagnostic logs only. The final three expose the
+% admissible, learned, and safety-filter steering contributions.
 sys = [delta; delta_applied; weight_norm; delta_nominal; ...
-    WF_norm; Wc_norm; Wa_move; double(safety_conflict)];
+    WF_norm; Wc_norm; Wa_move; double(safety_conflict); ...
+    delta_admissible; delta_RL; delta_safety_correction];
 
 function [WF,Wc,Wa,O2] = unpackStates(x)
 WF = reshape(x(1:18),9,2);
@@ -173,15 +191,21 @@ lf = 1.18;
 cf = 80000*(1 + 0.1*sin(0.01*t));
 C = [cf/m; lf*cf/Iz];
 
-function Wa0 = admissibleActorWeights
-actor_scales = [0.03; 0.005; 0.5; 0.2];
+function delta = admissiblePolicy(Z_F)
+% The CARE/LQR policy supplies the admissible control-direction gradient.
 K0 = [14.9071198; 102.062194; 1.56893982; 0.718999721];
-Wa0 = [-K0.*actor_scales; zeros(5,1)];
+delta = -K0'*Z_F;
 
-function psi = actorFeatures(Z_F,Z_J)
-psi = [Z_F(1)/0.03; Z_F(2)/0.005; Z_F(3)/0.5; Z_F(4)/0.2; ...
-    tanh(Z_J(1)/5); tanh(Z_J(2)/5); ...
-    tanh(Z_J(3)/0.25); tanh(Z_J(4)/0.25); 1];
+function gradient = admissibleValueGradient( ...
+    Z_J,C,delta_admissible,R_delta)
+% Its z2 component is the minimum-norm value gradient that recovers the
+% admissible policy through delta = -(1/(2r))*C'*grad_z2(J).
+s1 = Z_J(1:2);
+z2_bar = Z_J(3:4);
+k0 = 0.04;
+grad_s1 = k0*s1.*(z2_bar.^2);
+grad_z2 = -(2*R_delta*delta_admissible/(C'*C))*C;
+gradient = [grad_s1; grad_z2];
 
 function delta_applied = saturateSteering(delta,u_d)
 if abs(delta) > u_d
