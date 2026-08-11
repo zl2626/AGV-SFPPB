@@ -1,18 +1,13 @@
-
 close all;
 
-% 从工作区获取数据
+% 从工作区读取原模型的记录信号。
 t = out.t;
 e_y = out.e_y;
 eyu = out.eyu;
 eyl = out.eyl;
-eyu_ = out.eyu_;
-eyl_ = out.eyl_;
 e_phi = out.e_phi;
 ephiu = out.ephiu;
 ephil = out.ephil;
-ephiu_ = out.ephiu_;
-ephil_ = out.ephil_;
 v_y = out.v_y;
 omega_z = out.omega_z;
 s1y = out.s1y;
@@ -27,147 +22,158 @@ delta = out.delta;
 delta1 = out.delta1;
 W = out.W;
 w = out.w;
+rho_0_data = out.rho_0(:);
 
-% 绘制 e_y
-% figure(1);
-% plot(t, e_y, 'b', t, eyu, 'r', t, eyl, 'r', t, eyu_, 'g--', t, eyl_, 'g--', 'linewidth', 2);
-% xlabel('Time (sec)','FontSize', 16); ylabel('$e_y$','FontSize', 16, 'Interpreter', 'latex');
-% legend('$e_y$', '$E_h$', '$E_l$', '$e_h$', '$e_l$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
-% grid on;
-% % xlim([0, 20]);
-% ylim([-0.5, 0.5]);
-
+% Figure 1：横向误差与性能边界。
 figure(1);
 plot(t, e_y, 'b', t, eyu, 'r', t, eyl, 'r', 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$e_y$','FontSize', 16, 'Interpreter', 'latex');
-legend('$e_y$', '$e_h$', '$e_l$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$e_y$','FontSize', 16, 'Interpreter', 'latex');
+legend('$e_y$', '$e_h$', '$e_l$', 'FontSize', 24, ...
+    'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 20]);
 ylim([-0.5, 0.5]);
 
-% 绘制e_phi
-% figure(2);
-% plot(t, e_phi, 'b', t, ephiu, 'r', t, ephil, 'r', t, ephiu_, 'g--', t, ephil_, 'g--', 'linewidth', 2);
-% xlabel('Time (sec)','FontSize', 16); ylabel('$e_\varphi$', 'FontSize', 16, 'Interpreter', 'latex');
-% legend('$e_\varphi$', '$E_h$', '$E_l$', '$e_h$', '$e_l$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
-% grid on;
-% % xlim([0, 20]);
-% ylim([-0.15, 0.15]);
-
+% Figure 2：航向误差与性能边界。
 figure(2);
 plot(t, e_phi, 'b', t, ephiu, 'r', t, ephil, 'r', 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$e_\varphi$', 'FontSize', 16, 'Interpreter', 'latex');
-legend('$e_\varphi$', '$e_h$', '$e_l$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$e_\phi$', 'FontSize', 16, 'Interpreter', 'latex');
+legend('$e_\phi$', '$e_h$', '$e_l$', 'FontSize', 24, ...
+    'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 20]);
 ylim([-0.05, 0.05]);
 
-% 绘制 v_y
+% Figure 3：横向速度。
 figure(3);
 plot(t, v_y, 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$v_y$', 'FontSize', 16, 'Interpreter', 'latex');
-legend('$v_y$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$v_y$', 'FontSize', 16, 'Interpreter', 'latex');
+legend('$v_y$', 'FontSize', 24, 'FontAngle', 'italic', ...
+    'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 10]);
 ylim([-0.012, 0.007]);
 
-% 绘制omega_z
+% Figure 4：横摆角速度。
 figure(4);
 plot(t, omega_z, 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$\omega_z$(rad/s)','FontSize', 16, 'Interpreter', 'latex');
-legend('$\omega_z$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$\omega_z$(rad/s)','FontSize', 16, 'Interpreter', 'latex');
+legend('$\omega_z$', 'FontSize', 24, 'FontAngle', 'italic', ...
+    'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 10]);
 ylim([-0.006, 0.02]);
 
-% 绘制 s1y 和 z1y
+% Figure 5：第一层横向 PI 变换误差。
 figure(5);
 plot(t, z1y, 'r--', t, s1y, 'b-', 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$s_{1y}$','FontSize', 16, 'Interpreter', 'latex');
-legend('PI compensation signal $s_{1y}$ \,\,\,', '$s_{1y}$ without PI control', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$s_{1y}$','FontSize', 16, 'Interpreter', 'latex');
+legend('$z_{1y}$', '$s_{1y}=z_{1y}+k_{1y}I_{1y}$', 'FontSize', 24, ...
+    'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 20]);
 ylim([-1.4, 1.0]);
 
-% 绘制 s2y 和 z2y
+% Figure 6：第二层横向 PI 变换误差。
 figure(6);
 plot(t, z2y, 'r--', t, s2y, 'b-', 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$s_{2y}$','FontSize', 16, 'Interpreter', 'latex');
-legend('PI compensation signal $s_{2y}$ \,\,\,', '$s_{2y}$ without PI control', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$s_{2y}$','FontSize', 16, 'Interpreter', 'latex');
+legend('$z_{2y}$', '$s_{2y}=z_{2y}+k_{2y}I_{2y}$', 'FontSize', 24, ...
+    'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 20]);
 ylim([-0.3, 0.4]);
 
-% 绘制 s1phi 和 z1phi
+% Figure 7：第一层航向 PI 变换误差。
 figure(7);
 plot(t, z1phi, 'r--', t, s1phi, 'b-', 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$s_{1 \varphi}$','FontSize', 16, 'Interpreter', 'latex');
-legend('PI compensation signal $s_{1\varphi}$ \,\,\,', '$s_{1\varphi}$ without PI control', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$s_{1\phi}$','FontSize', 16, 'Interpreter', 'latex');
+legend('$z_{1\phi}$', '$s_{1\phi}=z_{1\phi}+k_{1\phi}I_{1\phi}$', ...
+    'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex', ...
+    'IconColumnWidth',50);
 grid on;
 xlim([0, 20]);
 ylim([-1, 1.3]);
 
-% 绘制 s2phi 和 z2phi
+% Figure 8：第二层航向 PI 变换误差。
 figure(8);
 plot(t, z2phi, 'r--', t, s2phi, 'b-', 'linewidth', 2);
-xlabel('Time (sec)','FontSize', 16); ylabel('$s_{2 \varphi}$','FontSize', 16, 'Interpreter', 'latex');
-legend('PI compensation signal $s_{2\varphi}$ \,\,\,', '$s_{2\varphi}$ without PI control', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+xlabel('Time (sec)','FontSize', 16);
+ylabel('$s_{2\phi}$','FontSize', 16, 'Interpreter', 'latex');
+legend('$z_{2\phi}$', '$s_{2\phi}=z_{2\phi}+k_{2\phi}I_{2\phi}$', ...
+    'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex', ...
+    'IconColumnWidth',50);
 grid on;
 xlim([0, 20]);
 ylim([-0.6, 0.8]);
 
-% 绘制 delta 和 delta1
+% Figure 9：方向盘请求与饱和后的实际输入。
 figure(9);
 plot(t, delta, 'b-', t, delta1, 'r--', 'linewidth', 2);
 xlabel('Time (sec)','FontSize', 16);
-legend('$\delta$', '$sat(\delta)$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+legend('$\delta$', '$sat(\delta)$', 'FontSize', 24, ...
+    'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 20]);
 ylim([-0.2, 1.6]);
-% ylim([-150, 200]);
 
-% 绘制 rho_0
+% Figure 10：道路参考曲率 rho_0。
 figure(10);
-
-% 检查out结构体中是否有rho_0
-if isfield(out, 'rho_0')
-    rho_0_data = out.rho_0;
-    
-    % 创建对应的时间向量
-    simulation_time = t(end);
-    time_per_step = simulation_time / length(rho_0_data);
-    t_rho = (0:length(rho_0_data)-1) * time_per_step;
-    
-    stairs(t_rho, rho_0_data, 'linewidth', 2);
+simulation_time = t(end);
+if numel(rho_0_data) > 1
+    t_rho = linspace(0, simulation_time, numel(rho_0_data));
 else
-    % 使用默认值
-    rho_0_values = [0 0.01 -0.01 0.01 0 0 0 0 0 0].';
-    simulation_time = t(end);
-    time_per_step = simulation_time / length(rho_0_values);
-    t_rho = (0:length(rho_0_values)-1) * time_per_step;
-    
-    stairs(t_rho, rho_0_values, 'linewidth', 2);
+    t_rho = [0, simulation_time];
+    rho_0_data = [rho_0_data; rho_0_data];
 end
-
+stairs(t_rho, rho_0_data, 'linewidth', 2);
 xlabel('Time (sec)','FontSize', 16);
-legend('$\rho_0$', 'FontSize', 24, 'Interpreter', 'latex','IconColumnWidth',50);
+legend('$\rho_0$', 'FontSize', 24, 'Interpreter', 'latex', ...
+    'IconColumnWidth',50);
 grid on;
-ylim([-0.015, 0.015]);
+ylim([-0.025, 0.025]);
 
-% 绘制 W
+% Figure 11：扰动信号与权重范数。
 figure(11);
 plot(t, w,'r', t, W, 'b','linewidth', 3);
 xlabel('Time (sec)','FontSize', 16);
-legend('$\omega$', '$\mathcal{W}$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+legend('$\omega$', '$\mathcal{W}$', 'FontSize', 24, ...
+    'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 10]);
 ylim([-0.5, 1.5]);
 
-% 绘制 w
+% Figure 12：扰动信号。
 figure(12);
 plot(t, w, 'linewidth', 3);
 xlabel('Time (sec)','FontSize', 16);
-legend('$\omega$', 'FontSize', 24, 'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
+legend('$\omega$', 'FontSize', 24, 'FontAngle', 'italic', ...
+    'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, 10]);
 ylim([-0.5, 1.5]);
+
+% Figure 13：由 rho_0 恢复的 U 形参考轨迹与实际 AGV 轨迹。
+vx = 20;                                      % AGV_plant.m 中的纵向速度
+rho_ref = interp1(t_rho, rho_0_data, t, 'previous', 'extrap');
+psi_r = cumtrapz(t, vx*rho_ref);
+X_r = cumtrapz(t, vx*cos(psi_r));
+Y_r = cumtrapz(t, vx*sin(psi_r));
+X = X_r-e_y.*sin(psi_r);
+Y = Y_r+e_y.*cos(psi_r);
+
+figure(13);
+plot(X_r, Y_r, 'k--', X, Y, 'b-', 'linewidth', 2);
+xlabel('$X$ (m)','FontSize', 16, 'Interpreter', 'latex');
+ylabel('$Y$ (m)','FontSize', 16, 'Interpreter', 'latex');
+legend('Reference U-shaped path', 'Actual AGV path', ...
+    'FontSize', 18, 'Interpreter', 'none');
+grid on;
+axis equal;
