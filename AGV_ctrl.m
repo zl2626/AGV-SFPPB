@@ -25,10 +25,12 @@ N = 7;
 
 % PI 参数：s1=z1+K1*I1，s2=z2+K2*I2
 global k1y k1phi k2y k2phi
+global tau_alpha1
 k1y = 0.10;                         % 第一层横向误差积分系数
 k1phi = 0.20;                       % 第一层航向误差积分系数
 k2y = 0.01;                         % 第二层横向误差积分系数
 k2phi = 0.01;                       % 第二层航向误差积分系数
+tau_alpha1 = 0.02;                  % 虚拟控制一阶滤波时间常数(s)
 
 % 两层控制器参数
 global c1y c1phi c2y c2phi
@@ -40,6 +42,7 @@ c2phi = 5;                          % 第二层航向稳定系数
 % RBF 自适应参数
 global Upsilon1 Upsilon2 sigma1 sigma2
 global gamma_c1 gamma_c2 gamma_a1 gamma_a2
+global learning_on
 Upsilon1 = 0.04;                    % 第一层辨识增益
 Upsilon2 = 0.04;                    % 第二层辨识增益
 sigma1 = 0.08;                      % 第一层泄漏系数
@@ -48,19 +51,25 @@ gamma_c1 = 0.004;                   % 第一层 Critic 增益
 gamma_c2 = 0.004;                   % 第二层 Critic 增益
 gamma_a1 = 0.012;                   % 第一层 Actor 增益
 gamma_a2 = 0.012;                   % 第二层 Actor 增益
+if isempty(learning_on)
+    learning_on = true;             % true在线学习，false冻结全部NN权重
+end
 
 % 车辆和方向盘参数
-global u_d m Iz lf cf0 cf_rate
-u_d = 0.5;                          % 方向盘最大输入
+global u_d m Iz lf cf0 cf_rate r_delta
+if isempty(u_d)
+    u_d = 0.5;                       % 方向盘最大输入（唯一来源）
+end
 m = 1832;                           % 车辆质量
 Iz = 2488;                          % 横摆转动惯量
 lf = 1.18;                          % 前轴到质心距离
 cf0 = 80000;                        % 初始前轮侧偏刚度
 cf_rate = 0.10;                     % 侧偏刚度变化幅度
+r_delta = norm([cf0/m;lf*cf0/Iz]);   % HJB转向输入代价权重
 
 % S-function 接口
 sizes = simsizes;
-sizes.NumContStates  = 12*N+6;
+sizes.NumContStates  = 12*N+8;
 sizes.NumDiscStates  = 0;
 sizes.NumOutputs     = 9;
 sizes.NumInputs      = 13;
@@ -68,7 +77,7 @@ sizes.DirFeedthrough = 1;
 sizes.NumSampleTimes = 1;
 sys = simsizes(sizes);
 
-% 状态顺序：[WF1;WC1;WA1;WF2;WC2;WA2;O;I1;I2]
+% 状态顺序：[WF1;WC1;WA1;WF2;WC2;WA2;O;alpha1_f;I1;I2]
 W0 = 0.4;
 w0 = W0*[-1;-1;-1;0;1;1;1];
 WF10 = repmat(w0,1,2);
@@ -78,9 +87,10 @@ WF20 = repmat(w0,1,2);
 WC20 = repmat(w0,1,2);
 WA20 = repmat(w0,1,2);
 O0 = zeros(2,1);
+alpha10 = zeros(2,1);
 I10 = zeros(2,1);
 I20 = zeros(2,1);
-x0 = [WF10(:);WC10(:);WA10(:);WF20(:);WC20(:);WA20(:);O0;I10;I20];
+x0 = [WF10(:);WC10(:);WA10(:);WF20(:);WC20(:);WA20(:);O0;alpha10;I10;I20];
 
 str = [];
 ts = [0 0];
@@ -90,9 +100,10 @@ function sys = mdlDerivatives(t,x,u)
 % 这里按顺序完成：解包状态、计算控制量、更新权重和 PI 积分器。
 global N c1y c1phi c2y c2phi
 global k1y k1phi k2y k2phi
+global tau_alpha1
 global Upsilon1 Upsilon2 sigma1 sigma2
-global gamma_c1 gamma_c2 gamma_a1 gamma_a2
-global u_d m Iz lf cf0 cf_rate
+global gamma_c1 gamma_c2 gamma_a1 gamma_a2 learning_on
+global u_d m Iz lf cf0 cf_rate r_delta
 
 % ------------------------- 解包状态 --------------------------
 i = 0;
@@ -103,6 +114,7 @@ WF2 = reshape(x(i+1:i+2*N),N,2); i = i+2*N;
 WC2 = reshape(x(i+1:i+2*N),N,2); i = i+2*N;
 WA2 = reshape(x(i+1:i+2*N),N,2); i = i+2*N;
 O = x(i+1:i+2); i = i+2;
+alpha1_f = x(i+1:i+2); i = i+2;
 I1 = x(i+1:i+2); i = i+2;
 I2 = x(i+1:i+2);
 
@@ -122,50 +134,67 @@ K2 = [k2y;k2phi];
 s1 = z1+K1.*I1;
 S_F1 = AGV_RBF(Z_F,'F');
 S_J1 = AGV_RBF([Z_F;s1],'J');
+% AGV第一层理想运动学是已知的；WF1当前只保留作未建模耦合项的保守估计，
+% 论文中仍需明确说明它对应的未知项，而不能把它当成自动成立的F1。
 F1_hat = WF1'*S_F1;
 alpha1 = varsigma\(-C1.*s1+Gamma-K1.*z1-F1_hat-0.5*WA1'*S_J1);
 
+% 用连续滤波器承接虚拟控制，显式得到dot(alpha1_f)。
+dalpha1_f = (alpha1-alpha1_f)/tau_alpha1;
+
 % ------------------------- 第二层 ----------------------------
-z2 = chi2-alpha1-O;
+z2 = chi2-alpha1_f-O;
 s2 = z2+K2.*I2;
 S_F2 = AGV_RBF(Z_F,'F');
 S_J2 = AGV_RBF([Z_F;s2],'J');
 F2_hat = WF2'*S_F2;
 
-% 第二层 PI 的积分项求导会产生 K2*z2，这一项不能漏掉。
-F2_PI = F2_hat+K2.*z2;
+% 第二层动力学中的-alpha1_dot现在由滤波器显式给出。
+% F2_hat只需辨识剩余未知项，PI积分项仍为K2*z2。
+F2_PI = F2_hat-dalpha1_f+K2.*z2;
 
-% 车辆输入方向，先归一化方向，再由控制增益调节幅值。
+% 车辆真实输入增益。plant使用同一个物理输入矩阵，不能只保留方向。
 cf = cf0*(1+cf_rate*sin(0.01*t));
 C_physical = [cf/m;lf*cf/Iz];
-C = C_physical/max(norm(C_physical),eps);
+C = C_physical;
 
 % 方向盘控制量和输入饱和补偿状态
 p_a2 = 2*C2.*s2+2*F2_PI+WA2'*S_J2;
-delta = -0.5*C'*p_a2;
+delta = -(C'*p_a2)/(2*r_delta);
 delta_smooth = u_d*tanh(delta/u_d);
 dO = -O+C*(delta_smooth-delta);
 
 % ------------------------- 权重更新 --------------------------
-dWF1 = Upsilon1*(S_F1*s1'-sigma1*WF1);
-dWF2 = Upsilon2*(S_F2*s2'-sigma2*WF2);
-dWC1 = -gamma_c1*(S_J1*S_J1')*WC1;
-dWC2 = -gamma_c2*(S_J2*S_J2')*WC2;
-dWA1 = -(S_J1*S_J1')*(gamma_a1*(WA1-WC1)+gamma_c1*WC1);
-dWA2 = -(S_J2*S_J2')*(gamma_a2*(WA2-WC2)+gamma_c2*WC2);
+if learning_on
+    dWF1 = Upsilon1*(S_F1*s1'-sigma1*WF1);
+    dWF2 = Upsilon2*(S_F2*s2'-sigma2*WF2);
+    dWC1 = -gamma_c1*(S_J1*S_J1')*WC1;
+    dWC2 = -gamma_c2*(S_J2*S_J2')*WC2;
+    dWA1 = -(S_J1*S_J1')*(gamma_a1*(WA1-WC1)+gamma_c1*WC1);
+    dWA2 = -(S_J2*S_J2')*(gamma_a2*(WA2-WC2)+gamma_c2*WC2);
+else
+    dWF1 = zeros(size(WF1));
+    dWF2 = zeros(size(WF2));
+    dWC1 = zeros(size(WC1));
+    dWC2 = zeros(size(WC2));
+    dWA1 = zeros(size(WA1));
+    dWA2 = zeros(size(WA2));
+end
 
 % PI 积分器
 dI1 = z1;
 dI2 = z2;
 
-sys = [dWF1(:);dWC1(:);dWA1(:);dWF2(:);dWC2(:);dWA2(:);dO;dI1;dI2];
+sys = [dWF1(:);dWC1(:);dWA1(:);dWF2(:);dWC2(:);dWA2(:);dO; ...
+       dalpha1_f;dI1;dI2];
 end
 
 function sys = mdlOutputs(t,x,u)
 % 输出实际方向盘请求、饱和后的请求、权重范数以及调试信号。
 global N c1y c1phi c2y c2phi
 global k1y k1phi k2y k2phi
-global u_d m Iz lf cf0 cf_rate
+global tau_alpha1
+global u_d m Iz lf cf0 cf_rate r_delta
 
 % ------------------------- 解包状态 --------------------------
 i = 0;
@@ -176,6 +205,7 @@ WF2 = reshape(x(i+1:i+2*N),N,2); i = i+2*N;
 WC2 = reshape(x(i+1:i+2*N),N,2); i = i+2*N;
 WA2 = reshape(x(i+1:i+2*N),N,2); i = i+2*N;
 O = x(i+1:i+2); i = i+2;
+alpha1_f = x(i+1:i+2); i = i+2;
 I1 = x(i+1:i+2); i = i+2;
 I2 = x(i+1:i+2);
 
@@ -198,20 +228,22 @@ S_J1 = AGV_RBF([Z_F;s1],'J');
 F1_hat = WF1'*S_F1;
 alpha1 = varsigma\(-C1.*s1+Gamma-K1.*z1-F1_hat-0.5*WA1'*S_J1);
 
+dalpha1_f = (alpha1-alpha1_f)/tau_alpha1;
+
 % 第二层 PI 和 RBF
-z2 = chi2-alpha1-O;
+z2 = chi2-alpha1_f-O;
 s2 = z2+K2.*I2;
 S_F2 = AGV_RBF(Z_F,'F');
 S_J2 = AGV_RBF([Z_F;s2],'J');
 F2_hat = WF2'*S_F2;
-F2_PI = F2_hat+K2.*z2;
+F2_PI = F2_hat-dalpha1_f+K2.*z2;
 
-% 车辆输入方向和最终控制量
+% 车辆真实输入增益和最终控制量
 cf = cf0*(1+cf_rate*sin(0.01*t));
 C_physical = [cf/m;lf*cf/Iz];
-C = C_physical/max(norm(C_physical),eps);
+C = C_physical;
 p_a2 = 2*C2.*s2+2*F2_PI+WA2'*S_J2;
-delta = -0.5*C'*p_a2;
+delta = -(C'*p_a2)/(2*r_delta);
 delta_sat = min(max(delta,-u_d),u_d);
 
 W = norm([WF1(:);WC1(:);WA1(:);WF2(:);WC2(:);WA2(:)]);

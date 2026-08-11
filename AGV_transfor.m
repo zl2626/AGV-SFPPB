@@ -22,10 +22,10 @@ function [sys,x0,str,ts] = mdlInitializeSizes
 % ========================== SFPPB参数 ==========================
 % 横向误差 y
 global kappa0_y kappaT_y T_y l_kappa_y l_s_y eta_y
-global lambda1_y lambda2_y e0_y
+global lambda1_y lambda2_y
 % 航向误差 phi
 global kappa0_phi kappaT_phi T_phi l_kappa_phi l_s_phi eta_phi
-global lambda1_phi lambda2_phi e0_phi
+global lambda1_phi lambda2_phi
 global nmt_margin
 
 kappa0_y = 0.28;                 % kappa_y(0)
@@ -36,7 +36,6 @@ l_s_y = 1;
 eta_y = 1;
 lambda1_y = 0.50;
 lambda2_y = 0.50;
-e0_y = -0.10;
 
 kappa0_phi = 0.10;               % kappa_phi(0)
 kappaT_phi = 0.08;               % kappa_phi(T)
@@ -46,7 +45,6 @@ l_s_phi = 1;
 eta_phi = 1;
 lambda1_phi = 0.40;
 lambda2_phi = 0.40;
-e0_phi = 0.01;
 
 nmt_margin = 1e-10;              % 只避免浮点数把点判到端点
 
@@ -65,15 +63,23 @@ end
 
 function sys = mdlOutputs(t,u)
 global kappa0_y kappaT_y T_y l_kappa_y l_s_y eta_y
-global lambda1_y lambda2_y e0_y
+global lambda1_y lambda2_y
 global kappa0_phi kappaT_phi T_phi l_kappa_phi l_s_phi eta_phi
-global lambda1_phi lambda2_phi e0_phi nmt_margin
+global lambda1_phi lambda2_phi nmt_margin
+
+persistent e0_y0 e0_phi0
 
 % Mux4输入：[e_y,de_y,rho,e_phi,de_phi,rho_dot]
 e_y = u(1);
 e_phi = u(4);
 rho = max(0,u(3));
 rho_dot_now = u(6);
+
+% 初始误差直接读取车辆当前初值，避免SFPPB和plant各写一份e(0)。
+if isempty(e0_y0) || t <= 1e-12
+    e0_y0 = e_y;
+    e0_phi0 = e_phi;
+end
 
 % ------------------- kappa(t)和S(t) -------------------
 if t < T_y
@@ -107,30 +113,29 @@ else
 end
 
 % -------------------- 名义边界和柔性边界 --------------------
-% e0_y<0，所以y使用[-kappa_y, eta_y*kappa_y]。
-if e0_y < 0
-    B_under_y0 = -kappa_y+e0_y*S_y;
-    B_bar_y0 = eta_y*kappa_y+e0_y*S_y;
-    B_under_y0_dot = -kappa_dot_y+e0_y*S_dot_y;
-    B_bar_y0_dot = eta_y*kappa_dot_y+e0_y*S_dot_y;
+% 根据实际初始误差方向选择初始性能边界。
+if e0_y0 < 0
+    B_under_y0 = -kappa_y+e0_y0*S_y;
+    B_bar_y0 = eta_y*kappa_y+e0_y0*S_y;
+    B_under_y0_dot = -kappa_dot_y+e0_y0*S_dot_y;
+    B_bar_y0_dot = eta_y*kappa_dot_y+e0_y0*S_dot_y;
 else
-    B_under_y0 = -eta_y*kappa_y+e0_y*S_y;
-    B_bar_y0 = kappa_y+e0_y*S_y;
-    B_under_y0_dot = -eta_y*kappa_dot_y+e0_y*S_dot_y;
-    B_bar_y0_dot = kappa_dot_y+e0_y*S_dot_y;
+    B_under_y0 = -eta_y*kappa_y+e0_y0*S_y;
+    B_bar_y0 = kappa_y+e0_y0*S_y;
+    B_under_y0_dot = -eta_y*kappa_dot_y+e0_y0*S_dot_y;
+    B_bar_y0_dot = kappa_dot_y+e0_y0*S_dot_y;
 end
 
-% e0_phi>0，所以phi使用[-eta_phi*kappa_phi, kappa_phi]。
-if e0_phi < 0
-    B_under_phi0 = -kappa_phi+e0_phi*S_phi;
-    B_bar_phi0 = eta_phi*kappa_phi+e0_phi*S_phi;
-    B_under_phi0_dot = -kappa_dot_phi+e0_phi*S_dot_phi;
-    B_bar_phi0_dot = eta_phi*kappa_dot_phi+e0_phi*S_dot_phi;
+if e0_phi0 < 0
+    B_under_phi0 = -kappa_phi+e0_phi0*S_phi;
+    B_bar_phi0 = eta_phi*kappa_phi+e0_phi0*S_phi;
+    B_under_phi0_dot = -kappa_dot_phi+e0_phi0*S_dot_phi;
+    B_bar_phi0_dot = eta_phi*kappa_dot_phi+e0_phi0*S_dot_phi;
 else
-    B_under_phi0 = -eta_phi*kappa_phi+e0_phi*S_phi;
-    B_bar_phi0 = kappa_phi+e0_phi*S_phi;
-    B_under_phi0_dot = -eta_phi*kappa_dot_phi+e0_phi*S_dot_phi;
-    B_bar_phi0_dot = kappa_dot_phi+e0_phi*S_dot_phi;
+    B_under_phi0 = -eta_phi*kappa_phi+e0_phi0*S_phi;
+    B_bar_phi0 = kappa_phi+e0_phi0*S_phi;
+    B_under_phi0_dot = -eta_phi*kappa_dot_phi+e0_phi0*S_dot_phi;
+    B_bar_phi0_dot = kappa_dot_phi+e0_phi0*S_dot_phi;
 end
 
 B_under_y = B_under_y0-lambda1_y*tanh(rho);

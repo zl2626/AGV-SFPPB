@@ -9,6 +9,10 @@ eyl = out.eyl;
 e_phi = out.e_phi;
 ephiu = out.ephiu;
 ephil = out.ephil;
+eyu0 = out.eyu_(:);
+eyl0 = out.eyl_(:);
+ephiu0 = out.ephiu_(:);
+ephil0 = out.ephil_(:);
 v_y = out.v_y;
 omega_z = out.omega_z;
 s1y = out.s1y;
@@ -23,9 +27,27 @@ delta = out.delta;
 delta1 = out.delta1;
 W = out.W;
 w = out.w;
-rho_0_data = out.rho_0(:);
+rho_0_signal = out.rho_0;
+if isa(rho_0_signal,'timeseries')
+    rho_0_data = rho_0_signal.Data(:);
+    t_rho = rho_0_signal.Time(:);
+elseif isstruct(rho_0_signal) && isfield(rho_0_signal,'signals')
+    rho_0_data = rho_0_signal.signals.values(:);
+    t_rho = rho_0_signal.time(:);
+else
+    rho_0_data = rho_0_signal(:);
+    t_rho = [];
+end
 rho = out.rho(:);
 rho_dot = out.rho_dot(:);
+
+% 优先使用Simulink实际记录的rho_0时间；只有旧Array结果才重构时间轴。
+if isempty(t_rho) && numel(rho_0_data) == numel(t)
+    t_rho = t;
+elseif isempty(t_rho)
+    warning('rho_0没有对应时间向量，暂用线性时间轴重构。');
+    t_rho = linspace(0,simulation_time,numel(rho_0_data)).';
+end
 
 % 方向盘饱和上限，与 AGV_ctrl.m 保持一致。
 % 做 u_d=0.3 饱和试验时，在运行本脚本前设置 u_d_plot=0.3。
@@ -34,24 +56,31 @@ if ~exist('u_d_plot','var')
 end
 u_d = u_d_plot;
 
-% 每次运行都记录方向盘平滑性、饱和时间和边界余量。
-d_delta = gradient(delta,t);
+% 在固定时间网格上计算方向盘平滑性，避免variable-step采样影响结果。
+t_fixed = linspace(0,simulation_time,numel(t)).';
+delta_fixed = interp1(t,delta,t_fixed,'linear','extrap');
+d_delta = gradient(delta_fixed,t_fixed);
 J_delta = sqrt(mean(d_delta.^2));
+TV_delta = sum(abs(diff(delta_fixed)));
+RMS_e_y = sqrt(trapz(t,e_y.^2)/max(simulation_time,eps));
+RMS_e_phi = sqrt(trapz(t,e_phi.^2)/max(simulation_time,eps));
 T_sat = trapz(t,double(abs(delta)>u_d+1e-8));
 gap_y_low = min(e_y-eyl);
 gap_y_high = min(eyu-e_y);
 gap_phi_low = min(e_phi-ephil);
 gap_phi_high = min(ephiu-e_phi);
-fprintf(['J_delta=%.6g, T_sat=%.6g s, ' ...
+fprintf(['RMS(e_y)=%.6g, RMS(e_phi)=%.6g, RMS_delta_dot=%.6g, ' ...
+    'TV_delta=%.6g, T_sat=%.6g s, ' ...
     'min_gap_y=[%.6g, %.6g], min_gap_phi=[%.6g, %.6g]\n'], ...
-    J_delta,T_sat,gap_y_low,gap_y_high,gap_phi_low,gap_phi_high);
+    RMS_e_y,RMS_e_phi,J_delta,TV_delta,T_sat, ...
+    gap_y_low,gap_y_high,gap_phi_low,gap_phi_high);
 
 % Figure 1：横向误差与性能边界。
 figure(1);
 plot(t, e_y, 'b', t, eyu, 'r', t, eyl, 'r', 'linewidth', 2);
 xlabel('Time (sec)','FontSize', 16);
 ylabel('$e_y$','FontSize', 16, 'Interpreter', 'latex');
-legend('$e_y$', '$e_h$', '$e_l$', 'FontSize', 24, ...
+legend('$e_y$', '$\bar B_y$', '$\underline B_y$', 'FontSize', 24, ...
     'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, simulation_time]);
@@ -62,7 +91,7 @@ figure(2);
 plot(t, e_phi, 'b', t, ephiu, 'r', t, ephil, 'r', 'linewidth', 2);
 xlabel('Time (sec)','FontSize', 16);
 ylabel('$e_\phi$', 'FontSize', 16, 'Interpreter', 'latex');
-legend('$e_\phi$', '$e_h$', '$e_l$', 'FontSize', 24, ...
+legend('$e_\phi$', '$\bar B_\phi$', '$\underline B_\phi$', 'FontSize', 24, ...
     'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 grid on;
 xlim([0, simulation_time]);
@@ -138,51 +167,67 @@ setYLim([z2phi;s2phi]);
 
 % Figure 9：方向盘请求与饱和后的实际输入。
 figure(9);
+subplot(2,1,1);
 plot(t, delta, 'b-', t, delta1, 'r--', 'linewidth', 2);
 xlabel('Time (sec)','FontSize', 16);
+ylabel('$\delta$ (rad)','FontSize', 14, 'Interpreter', 'latex');
 legend('$\delta$', '$sat(\delta)$', 'FontSize', 24, ...
     'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
 yline(u_d, 'k:', 'u_d', 'LineWidth', 1.2, 'HandleVisibility', 'off');
 yline(-u_d, 'k:', '-u_d', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-grid on;
-xlim([0, simulation_time]);
-setYLim([delta;delta1;u_d;-u_d]);
+grid on; xlim([0,simulation_time]); setYLim([delta;delta1;u_d;-u_d]);
+subplot(2,1,2);
+plot(t_fixed,d_delta,'k','linewidth',1.5);
+xlabel('Time (sec)','FontSize', 14);
+ylabel('$\dot\delta$ (rad/s)','FontSize', 14, 'Interpreter', 'latex');
+grid on; xlim([0,simulation_time]); setYLim(d_delta);
 
 % Figure 10：道路参考曲率 rho_0，不是柔性辅助状态 rho。
 figure(10);
-if numel(rho_0_data) > 1
-    t_rho = linspace(0, simulation_time, numel(rho_0_data));
-else
-    t_rho = [0, simulation_time];
-    rho_0_data = [rho_0_data; rho_0_data];
-end
 stairs(t_rho, rho_0_data, 'linewidth', 2);
 xlabel('Time (sec)','FontSize', 16);
+ylabel('$\rho_0$ (m$^{-1}$)','FontSize', 16, 'Interpreter', 'latex');
 legend('$\rho_0$', 'FontSize', 24, 'Interpreter', 'latex', ...
     'IconColumnWidth',50);
 grid on;
 setYLim(rho_0_data);
 
-% Figure 11：扰动信号与权重范数，使用同一坐标轴但不裁剪 W。
+% Figure 11：扰动和权重范数分开显示，避免混用物理量纲。
 figure(11);
-plot(t, w,'r', t, W, 'b','linewidth', 3);
-xlabel('Time (sec)','FontSize', 16);
-legend('$\omega$', '$\mathcal{W}=||W||$', 'FontSize', 24, ...
-    'FontAngle', 'italic', 'Interpreter', 'latex','IconColumnWidth',50);
-grid on;
-xlim([0, simulation_time]);
-setYLim([w;W]);
+subplot(2,1,1);
+plot(t,w,'r','linewidth',2);
+xlabel('Time (sec)','FontSize', 14);
+ylabel('$w$','FontSize', 14, 'Interpreter', 'latex');
+grid on; xlim([0,simulation_time]); setYLim(w);
+subplot(2,1,2);
+plot(t,W,'b','linewidth',2);
+xlabel('Time (sec)','FontSize', 14);
+ylabel('$\|W\|$','FontSize', 14, 'Interpreter', 'latex');
+grid on; xlim([0,simulation_time]); setYLim(W);
 
-% Figure 12：SFPPB 柔性辅助状态 rho。
+% Figure 12：rho和性能边界扩张比例分开显示。
 figure(12);
-plot(t, rho, 'm', 'linewidth', 3);
-xlabel('Time (sec)','FontSize', 16);
- ylabel('$\rho$', 'FontSize', 16, 'Interpreter', 'latex');
-legend('$\rho$', 'FontSize', 24, 'FontAngle', 'italic', ...
-    'Interpreter', 'latex','IconColumnWidth',50);
-grid on;
-xlim([0, simulation_time]);
-setYLim(rho);
+subplot(2,1,1);
+plot(t, rho, 'm', 'linewidth', 2);
+xlabel('Time (sec)','FontSize', 14);
+ylabel('$\rho$', 'FontSize', 14, 'Interpreter', 'latex');
+grid on; xlim([0,simulation_time]); setYLim(rho);
+subplot(2,1,2);
+if numel(eyu0) == numel(t)
+    y_width0 = eyu0-eyl0;
+    phi_width0 = ephiu0-ephil0;
+    y_widening = max(0,(eyu-eyl-y_width0)./max(y_width0,eps));
+    phi_widening = max(0,(ephiu-ephil-phi_width0)./max(phi_width0,eps));
+    plot(t,y_widening,'r',t,phi_widening,'b','linewidth',2);
+    legend('y boundary','phi boundary','Location','best');
+    setYLim([y_widening;phi_widening]);
+else
+    plot(t,zeros(size(t)),'k');
+    legend('boundary data unavailable','Location','best');
+end
+xlabel('Time (sec)','FontSize',14);
+ylabel('Relative boundary widening','FontSize',14);
+grid on; xlim([0,simulation_time]);
 
 % Figure 13：由 rho_0 恢复的曲线路径与实际 AGV 轨迹。
 vx = 20;                                      % AGV_plant.m 中的纵向速度
@@ -197,10 +242,10 @@ figure(13);
 plot(X_r, Y_r, 'r--', X, Y, 'b-', 'linewidth', 2);
 xlabel('$X$ (m)','FontSize', 16, 'Interpreter', 'latex');
 ylabel('$Y$ (m)','FontSize', 16, 'Interpreter', 'latex');
-if simulation_time > 20
-    reference_name = 'Reference U-shaped path';
+if exist('scenario_name','var')
+    reference_name = scenario_name;
 else
-    reference_name = 'Reference curved path';
+    reference_name = 'Reference path';
 end
 legend(reference_name, 'Actual AGV path', ...
     'FontSize', 18, 'Interpreter', 'none');
