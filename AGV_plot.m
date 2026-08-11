@@ -194,7 +194,7 @@ X = X_r-e_y.*sin(psi_r);
 Y = Y_r+e_y.*cos(psi_r);
 
 figure(13);
-plot(X_r, Y_r, 'k--', X, Y, 'b-', 'linewidth', 2);
+plot(X_r, Y_r, 'r--', X, Y, 'b-', 'linewidth', 2);
 xlabel('$X$ (m)','FontSize', 16, 'Interpreter', 'latex');
 ylabel('$Y$ (m)','FontSize', 16, 'Interpreter', 'latex');
 if simulation_time > 20
