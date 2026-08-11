@@ -1,7 +1,7 @@
 function [sys,x0,str,ts] = assist1(~,x,u,flag)
-% ASSIST1  饱和辅助状态rho
-% 请求方向盘delta和实际饱和方向盘delta1的差值驱动rho，
-% rho再同时送给y和phi两条SFPPB边界。
+% ASSIST1  SFPPB输入饱和辅助状态
+% rho_dot = -p1*rho + p2*(varpi1+varpi2)
+% rho同时送给横向和航向两个SFPPB边界。
 
 switch flag
     case 0
@@ -16,12 +16,13 @@ switch flag
         error('assist1:UnhandledFlag','Unhandled flag = %d.',flag);
 end
 end
+
 function [sys,x0,str,ts] = mdlInitializeSizes
-% =========================== 参数区 ===================================
-global u_d m1 m2
-u_d = 0.5;                     % 方向盘物理饱和上限
-m1 = 5;                        % rho恢复系数
-m2 = 0.5;                     % 饱和超限输入系数
+% ======================= SFPPB参数 =======================
+global u_d p1 p2
+u_d = 0.5;                         % 执行器饱和上限
+p1 = 5;                            % rho衰减系数
+p2 = 0.5;                          % 饱和超限增益
 
 sizes = simsizes;
 sizes.NumContStates  = 1;
@@ -37,17 +38,16 @@ ts = [0 0];
 end
 
 function sys = mdlDerivatives(x,u)
-global u_d m1 m2
+global u_d p1 p2
 
 rho = max(x(1),0);
 delta = u(1);
-delta1 = min(max(delta,-u_d),u_d);
 
-% 对称饱和下，omega1+omega2=2|delta-delta1|。
-omega = 2*abs(delta-delta1);
-d_rho = -m1*rho+m2*omega;
+% 论文中的两个饱和超限项，不使用等价的abs简写。
+varpi1 = (sign(delta-u_d)+1)*(delta-u_d);
+varpi2 = (sign(delta+u_d)-1)*(delta+u_d);
 
-% 保证rho不因数值误差变成负数。
+d_rho = -p1*rho+p2*(varpi1+varpi2);
 if x(1) <= 0 && d_rho < 0
     d_rho = 0;
 end

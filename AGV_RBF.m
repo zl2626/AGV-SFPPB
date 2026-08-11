@@ -1,63 +1,51 @@
-function [S,dS] = AGV_RBF(Z,type)
-% AGV_RBF  论文中的高斯RBF基函数
-% type='F'：Identifier输入物理状态Z_F=[e_y,e_phi,de_y,de_phi]
-% type='J'：Critic/Actor输入Z_J=[Z_F,z_j]
-% 返回S和对最后两个变换误差的偏导dS。
+function S = AGV_RBF(Z,type)
+% AGV_RBF  论文中的普通Gaussian RBF基函数
+% F网络输入：Z_F=[e_y,e_phi,de_y,de_phi]
+% J网络输入：Z_J=[Z_F,z_j]
+% 公式：S_j(Z)=exp(-(Z-c_j)'(Z-c_j)/a^2)
 
 if nargin < 2
     type = 'F';
 end
 Z = Z(:);
 
-% =========================== RBF参数 ==================================
-N = 7;                         % 节点数
-c = 1.5;                       % 节点中心距离
-b = 1.1;                       % 高斯宽度
+% ========================== RBF参数 ==========================
+N = 7;
+a = 1.2;                         % Gaussian宽度
+
+% 物理状态的7个中心
+c_F = [ ...
+    -1.0, -0.5, -0.2, 0, 0.2, 0.5, 1.0;
+    -0.3, -0.1, -0.05, 0, 0.05, 0.1, 0.3;
+    -0.5, -0.2, 0, 0, 0, 0.2, 0.5;
+    -0.2, -0.05, 0, 0, 0, 0.05, 0.2];
+
+% Critic/Actor的z_j中心，仍然是普通Gaussian，不做原点门控。
+c_z = [ ...
+    -1.0, -0.5, -0.2, 0, 0.2, 0.5, 1.0;
+    -1.0, -0.5, -0.2, 0, 0.2, 0.5, 1.0];
 
 if upper(type) == 'F'
     if numel(Z) ~= 4
-        error('AGV_RBF:Input','F网络输入必须是4维物理状态');
+        error('AGV_RBF:Input','F网络输入必须是4维物理状态。');
     end
-    l = [1;0.1;1;0.3];         % 各物理量的尺度
-    d = [ 1,  1,  1;
-          1, -1,  1;
-          1,  1, -1;
-          1, -1, -1];
-    centered = 0;
-else
+    c = c_F;
+    % 让e_phi和de_phi的量纲与论文中的归一化状态一致。
+    scale = [1;0.1;1;0.3];
+elseif upper(type) == 'J'
     if numel(Z) ~= 6
-        error('AGV_RBF:Input','J网络输入必须是[Z_F;z_j]六维状态');
+        error('AGV_RBF:Input','J网络输入必须是[Z_F;z_j]六维状态。');
     end
-    l = [1;0.1;1;0.3;1;1];
-    d = [ 1,  1,  1;
-          1, -1,  1;
-          1,  1, -1;
-          1, -1, -1;
-         -1,  1,  1;
-         -1, -1,  1];
-    centered = 1;
+    c = [c_F;c_z];
+    scale = [1;0.1;1;0.3;1;1];
+else
+    error('AGV_RBF:Type','type只能是F或J。');
 end
-% 三个正方向、三个负方向和原点，共N个节点。
-d = d./sqrt(sum(d.^2,1));
-center = [zeros(numel(Z),1),c*d,-c*d];
 
-q = Z./l;
+Z = Z./scale;
+c = c./scale;
 S = zeros(N,1);
-dS = zeros(N,numel(Z));
-for i = 1:N
-    qi = q-center(:,i);
-    S(i) = exp(-(qi'*qi)/(2*b^2));
-    dS(i,:) = -(S(i)/b^2)*(qi./l)';
-end
-
-if centered
-    % 让J特征在原点满足S(0)=0、dS(0)=0，避免零误差时产生方向盘偏置。
-    q0 = -center;
-    S0 = exp(-sum(q0.^2,1)'/(2*b^2));
-    gate = 1-exp(-0.5*(q'*q));
-    dgate = exp(-0.5*(q'*q))*(q./l)';
-    S_old = S;
-    S = gate*(S-S0);
-    dS = gate*dS+(S_old-S0)*dgate;
-end
+for j = 1:N
+    d = Z-c(:,j);
+    S(j) = exp(-(d'*d)/(a^2));
 end

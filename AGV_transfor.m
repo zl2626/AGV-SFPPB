@@ -1,8 +1,8 @@
 function [sys,x0,str,ts] = AGV_transfor(t,~,u,flag)
-% AGV_TRANSFOR  SFPPB边界和NMT变换
-% 代码结构沿用原AGV_TFS，只把性能边界改成SFPPB。
-% Mux4输入：[e_y,de_y,rho_sat,e_phi,de_phi,rho_sat]
-% 输出前4个是柔性边界，5到8个是varsigma和z1。
+% AGV_TRANSFOR  SFPPB性能边界和NMT变换
+% 只做：
+%   kappa(t) -> S(t) -> SFPPB -> NMT -> z1
+% 不保留PI、不在这里写控制律。
 
 switch flag
     case 0
@@ -17,32 +17,38 @@ switch flag
         error('AGV_transfor:UnhandledFlag','Unhandled flag = %d.',flag);
 end
 end
+
 function [sys,x0,str,ts] = mdlInitializeSizes
-% =========================== 参数区 ===================================
-% y和phi各使用一组论文中的SFPPB参数，直接在这里调节。
-global rho_0_y rho_T_y delta_y e_0_y T_y a_y
-global rho_0_phi rho_T_phi delta_phi e_0_phi T_phi a_phi
-global lambda1_y lambda2_y lambda1_phi lambda2_phi nmt_margin
+% ========================== SFPPB参数 ==========================
+% 横向误差 y
+global kappa0_y kappaT_y T_y l_kappa_y l_s_y eta_y
+global lambda1_y lambda2_y e0_y
+% 航向误差 phi
+global kappa0_phi kappaT_phi T_phi l_kappa_phi l_s_phi eta_phi
+global lambda1_phi lambda2_phi e0_phi
+global nmt_margin
 
-rho_0_y = 0.28;                % y初始名义边界半宽
-rho_T_y = 0.24;                % y稳态名义边界半宽
-delta_y = 1;                   % y边界尺度
-e_0_y = -0.10;
+kappa0_y = 0.28;                 % kappa_y(0)
+kappaT_y = 0.24;                 % kappa_y(T)
 T_y = 5;
-a_y = 1;
+l_kappa_y = 1;
+l_s_y = 1;
+eta_y = 1;
+lambda1_y = 0.50;
+lambda2_y = 0.50;
+e0_y = -0.10;
 
-rho_0_phi = 0.10;              % phi初始名义边界半宽
-rho_T_phi = 0.08;
-delta_phi = 1;                 % phi边界尺度
-e_0_phi = 0.01;
+kappa0_phi = 0.10;               % kappa_phi(0)
+kappaT_phi = 0.08;               % kappa_phi(T)
 T_phi = 5;
-a_phi = 1;
-
-lambda1_y = 0.50;              % 饱和时下边界放宽量
-lambda2_y = 0.50;              % 饱和时上边界放宽量
+l_kappa_phi = 1;
+l_s_phi = 1;
+eta_phi = 1;
 lambda1_phi = 0.40;
 lambda2_phi = 0.40;
-nmt_margin = 1e-9;             % 只用于数值试探点，不改记录的边界
+e0_phi = 0.01;
+
+nmt_margin = 1e-10;              % 只避免浮点数把点判到端点
 
 sizes = simsizes;
 sizes.NumContStates  = 0;
@@ -58,62 +64,84 @@ ts = [0 0];
 end
 
 function sys = mdlOutputs(t,u)
-global rho_0_y rho_T_y delta_y e_0_y T_y a_y
-global rho_0_phi rho_T_phi delta_phi e_0_phi T_phi a_phi
-global lambda1_y lambda2_y lambda1_phi lambda2_phi nmt_margin
+global kappa0_y kappaT_y T_y l_kappa_y l_s_y eta_y
+global lambda1_y lambda2_y e0_y
+global kappa0_phi kappaT_phi T_phi l_kappa_phi l_s_phi eta_phi
+global lambda1_phi lambda2_phi e0_phi nmt_margin
 
-% 从Mux4中取出两个物理误差；第三和第六个信号是同一个rho_sat。
+% Mux4输入：[e_y,de_y,rho,e_phi,de_phi,rho]
 e_y = u(1);
 e_phi = u(4);
-rho_sat = max(0,0.5*(u(3)+u(6)));
+rho = max(0,0.5*(u(3)+u(6)));
 
-% -------------------------- SFPPB边界 -------------------------------
+% ------------------- kappa(t)和S(t) -------------------
 if t < T_y
-    rho_y = (rho_0_y-rho_T_y)*(a_y*(T_y-t)/T_y)^3+rho_T_y;
-    shift_y = (1-t/T_y)^1;
+    q_y = sin(pi*t/(2*T_y));
+    kappa_y = kappa0_y+(kappaT_y-kappa0_y)*q_y^l_kappa_y;
+    S_y = (1-q_y)^l_s_y;
 else
-    rho_y = rho_T_y;
-    shift_y = 0;
+    kappa_y = kappaT_y;
+    S_y = 0;
 end
+
 if t < T_phi
-    rho_phi = (rho_0_phi-rho_T_phi)*(a_phi*(T_phi-t)/T_phi)^3+rho_T_phi;
-    shift_phi = (1-t/T_phi)^1;
+    q_phi = sin(pi*t/(2*T_phi));
+    kappa_phi = kappa0_phi+(kappaT_phi-kappa0_phi)*q_phi^l_kappa_phi;
+    S_phi = (1-q_phi)^l_s_phi;
 else
-    rho_phi = rho_T_phi;
-    shift_phi = 0;
+    kappa_phi = kappaT_phi;
+    S_phi = 0;
 end
 
-% 通过e_0把名义边界平移到给定初始误差附近。
-e_under_y = -delta_y*rho_y+e_0_y*shift_y;
-e_bar_y = delta_y*rho_y+e_0_y*shift_y;
-e_under_phi = -delta_phi*rho_phi+e_0_phi*shift_phi;
-e_bar_phi = delta_phi*rho_phi+e_0_phi*shift_phi;
+% -------------------- 名义边界和柔性边界 --------------------
+% e0_y<0，所以y使用[-kappa_y, eta_y*kappa_y]。
+if e0_y < 0
+    B_under_y0 = -kappa_y+e0_y*S_y;
+    B_bar_y0 = eta_y*kappa_y+e0_y*S_y;
+else
+    B_under_y0 = -eta_y*kappa_y+e0_y*S_y;
+    B_bar_y0 = kappa_y+e0_y*S_y;
+end
 
-% 饱和状态同时作用于y和phi，只有一个公共rho_sat。
-e_under_y_flex = e_under_y-lambda1_y*tanh(rho_sat);
-e_bar_y_flex = e_bar_y+lambda2_y*tanh(rho_sat);
-e_under_phi_flex = e_under_phi-lambda1_phi*tanh(rho_sat);
-e_bar_phi_flex = e_bar_phi+lambda2_phi*tanh(rho_sat);
+% e0_phi>0，所以phi使用[-eta_phi*kappa_phi, kappa_phi]。
+if e0_phi < 0
+    B_under_phi0 = -kappa_phi+e0_phi*S_phi;
+    B_bar_phi0 = eta_phi*kappa_phi+e0_phi*S_phi;
+else
+    B_under_phi0 = -eta_phi*kappa_phi+e0_phi*S_phi;
+    B_bar_phi0 = kappa_phi+e0_phi*S_phi;
+end
 
-% ---------------------------- NMT ------------------------------------
-% 求解器试探点可能恰好落在边界上，只在计算NMT时做极小截断。
-margin_y = max(nmt_margin,1e-8*(e_bar_y_flex-e_under_y_flex));
-margin_phi = max(nmt_margin,1e-8*(e_bar_phi_flex-e_under_phi_flex));
-e_y_nmt = min(max(e_y,e_under_y_flex+margin_y),e_bar_y_flex-margin_y);
-e_phi_nmt = min(max(e_phi,e_under_phi_flex+margin_phi),e_bar_phi_flex-margin_phi);
+B_under_y = B_under_y0-lambda1_y*tanh(rho);
+B_bar_y = B_bar_y0+lambda2_y*tanh(rho);
+B_under_phi = B_under_phi0-lambda1_phi*tanh(rho);
+B_bar_phi = B_bar_phi0+lambda2_phi*tanh(rho);
 
-z1_y = log((e_y_nmt-e_under_y_flex)/(e_bar_y_flex-e_y_nmt));
-z1_phi = log((e_phi_nmt-e_under_phi_flex)/(e_bar_phi_flex-e_phi_nmt));
-varsigma_y = (e_bar_y_flex-e_under_y_flex) / ...
-    ((e_bar_y_flex-e_y_nmt)*(e_y_nmt-e_under_y_flex));
-varsigma_phi = (e_bar_phi_flex-e_under_phi_flex) / ...
-    ((e_bar_phi_flex-e_phi_nmt)*(e_phi_nmt-e_under_phi_flex));
+% -------------------------- NMT --------------------------
+% 调试阶段不把越界误差夹回边界；越界就直接报错。
+if e_y <= B_under_y+nmt_margin || e_y >= B_bar_y-nmt_margin
+    error('AGV_transfor:BoundaryViolation', ...
+        'y边界在t=%.6f被越过：e_y=%.6g, [%.6g, %.6g].', ...
+        t,e_y,B_under_y,B_bar_y);
+end
+if e_phi <= B_under_phi+nmt_margin || e_phi >= B_bar_phi-nmt_margin
+    error('AGV_transfor:BoundaryViolation', ...
+        'phi边界在t=%.6f被越过：e_phi=%.6g, [%.6g, %.6g].', ...
+        t,e_phi,B_under_phi,B_bar_phi);
+end
 
-% 输出顺序必须和原Simulink Demux5一致。
+z1_y = log((e_y-B_under_y)/(B_bar_y-e_y));
+z1_phi = log((e_phi-B_under_phi)/(B_bar_phi-e_phi));
+varsigma_y = (B_bar_y-B_under_y)/ ...
+    ((B_bar_y-e_y)*(e_y-B_under_y));
+varsigma_phi = (B_bar_phi-B_under_phi)/ ...
+    ((B_bar_phi-e_phi)*(e_phi-B_under_phi));
+
+% 保持原Demux5/Mux1接口不变。
 zero = 0;
-sys = [e_bar_y_flex;e_under_y_flex;e_bar_phi_flex;e_under_phi_flex; ...
+sys = [B_bar_y;B_under_y;B_bar_phi;B_under_phi; ...
        varsigma_y;z1_y;z1_phi;varsigma_phi; ...
-       zero;zero;zero;zero;rho_sat; ...
+       zero;zero;zero;zero;rho; ...
        z1_y;z1_phi;zero;zero; ...
-       e_bar_y;e_under_y;e_bar_phi;e_under_phi];
+       B_bar_y0;B_under_y0;B_bar_phi0;B_under_phi0];
 end
