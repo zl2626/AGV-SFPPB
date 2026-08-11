@@ -33,7 +33,8 @@ run('AGV_plot.m');
 ```matlab
 k1y = 0.10;   k1phi = 0.20;
 k2y = 0.01;   k2phi = 0.01;
-c1 = [2;22];  c2 = [2;5];
+c1y = 2;      c1phi = 22;
+c2y = 2;      c2phi = 5;
 Upsilon1 = 0.04;  Upsilon2 = 0.04;
 sigma1 = 0.08;    sigma2 = 0.08;
 gamma_c1 = 0.004; gamma_c2 = 0.004;
@@ -51,14 +52,14 @@ u_d = 0.5;
 
 ## 输入方向增益
 
-`AGV_ctrl.m` 中显式保留车辆物理输入方向
+`AGV_ctrl.m` 中显式保留车辆物理输入方向，并直接归一化为控制方向：
 
 ```matlab
 C_physical = [cf/m; lf*cf/Iz];
+C = C_physical/norm(C_physical);
 ```
 
-默认 `C_direction_normalization = 1`，明确使用
-`Cbar=C_physical/||C_physical||`，把输入幅值吸收到未知函数和控制增益中；改为 `0` 时可直接测试物理输入增益。
+这样只保留方向，输入幅值由控制增益调节，代码更接近原 AGV-TFS 的直线写法。
 
 ## 结果
 
