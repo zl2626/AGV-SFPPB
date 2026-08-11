@@ -1,8 +1,8 @@
 # SFPPB-RL AGV复现说明
 
-本目录是在原 AGV-TFS 工程骨架上改写的版本。AGV_plant.m、
-AGV_simulate.slx 和 AGV_plot.m 保持不变，只改了 SFPPB 边界、输入饱和
-辅助状态、Gaussian RBF 和 ICAS-RL 控制器。
+本目录是在原 AGV-TFS 工程骨架上改写的版本。AGV_simulate.slx 和
+AGV_plot.m 保持不变，只改了 SFPPB 边界、输入饱和辅助状态、Gaussian
+RBF、ICAS-RL 控制器，并核正了 AGV_plant.m 中航向误差矩阵的符号。
 
 控制链为：
 
@@ -54,6 +54,11 @@ B_under_i = b_under_i + e0_i*S_i - lambda1_i*tanh(rho)
 B_bar_i   = b_bar_i   + e0_i*S_i + lambda2_i*tanh(rho)
 
 z1_i = log((e_i-B_under_i)/(B_bar_i-e_i))
+
+Gamma_i = B_bar_i_dot/(B_bar_i-e_i)
+          + B_under_i_dot/(e_i-B_under_i)
+
+z1_dot = varsigma_i*e_i_dot-Gamma_i
 ~~~
 
 调试阶段不把越界误差夹回边界；真实越界会直接报错。
@@ -85,32 +90,51 @@ varpi2 = [sign(delta+u_d)-1]*(delta+u_d)
 
 ~~~text
 alpha1 = varsigma^(-1)
-         [-c1*z1 - WF1'*S_F1 - 0.5*WA1'*S_J1]
+         [-c1*z1 + Gamma - WF1'*S_F1 - 0.5*WA1'*S_J1]
 ~~~
 
 输入饱和补偿和第二层：
 
 ~~~text
-O_dot = -O + C*(delta_applied-delta)
+O_dot = -O + C*(u_d*tanh(delta/u_d)-delta)
 z2 = chi2-alpha1-O
 
 p_a2 = 2*c2*z2 + 2*WF2'*S_F2 + WA2'*S_J2
 delta = -0.5*C'*p_a2
 ~~~
 
+Actor更新律前面使用论文Eq.(46)的负号；六组权重从幅值为 `0.4` 的
+确定性对称初值开始，避免Critic/Actor从零初值时永远不学习，同时避免
+二维AGV输入增益把初始方向盘请求瞬间放大。
 最终只有一个标量方向盘请求 delta。
+
+由于AGV是二维误差、单方向盘输入，控制器内部使用归一化的输入方向
+`C/norm(C)`；车辆本体仍使用 `AGV_plant.m` 的物理输入矩阵。
+
+## 车辆矩阵核对
+
+`AGV_plant.m` 使用论文Eq.(13)的航向误差项：
+
+~~~text
+a22 = (-lf*cf + lr*cr)/Iz
+b12 = (-lf*cf + lr*cr)/(m*vx) - vx
+~~~
+
+其中 `-vx` 是论文横向误差动力学中的运动学项，保留不删；修正的是
+状态矩阵第四行第二列原先误写的 `-lf*cf-lr*cr`。
 
 ## 20秒直接仿真结果
 
 本次在原 Simulink 模型上直接运行，未使用随机初值、测量噪声或
 Monte Carlo：
 
-- y 最小边界余量：0.197592；
-- phi 最小边界余量：0.031667；
-- 请求方向盘最大值：0.413231 rad；
-- 实际方向盘最大值：0.413231 rad；
-- y RMS：0.028355；
-- phi RMS：0.013703；
-- J：0.175775。
+- y 最小边界余量：0.198816；
+- phi 最小边界余量：0.071791；
+- 请求方向盘最大值：0.459727 rad；
+- 实际方向盘最大值：0.459727 rad；
+- rho 最大值：0；
+- y RMS：0.040965；
+- phi RMS：0.004770；
+- 末时刻权重范数：3.325515。
 
 结果图片保存在 fig3 文件夹。
