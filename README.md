@@ -26,6 +26,17 @@ run('AGV_plot.m');
 
 `AGV_plot.m` 按原 AGV-TFS 风格生成 13 幅图，Figure 13 是由 `rho_0` 恢复的曲线路径和实际 AGV 轨迹。结果图保存在 `fig3`。
 
+主模型 `AGV_simulate.slx` 保留 20 s 小曲率基准工况。真正的 U 形路径验证放在 `AGV_simulate_U.slx`：
+
+```matlab
+out = sim('AGV_simulate_U','ReturnWorkspaceOutputs','on');
+run('AGV_plot.m');
+```
+
+U 形工况使用 `v_x=20 m/s`、`rho_0=0.002`，在 `10~88.54 s` 保持曲率，航向变化约为
+`20*0.002*(88.54-10)=pi`，因此是完整的 180° 半圆掉头；总仿真时间为 100 s。对应结果图命名为
+`fig3/sfppb_pi_u_01~13`。之所以采用较长的半圆时间，是为了保持当前 SFPPB 边界和控制器不变；在 20 s 内直接使用 `rho_0=0.02` 会造成边界越界。
+
 ## 参数位置
 
 不使用参数文件。所有控制器参数都在 `AGV_ctrl.m` 文件顶部：
@@ -108,3 +119,4 @@ sat time          = 1.098 s
 - `AGV_plant.m`：AGV 横向动力学模型。
 - `AGV_plot.m`：时域结果图、`rho` 柔性状态图和 Figure 13 曲线路径图。
 - `AGV_simulate.slx`：原模型结构，增加了 PI 诊断记录通道、`rho/rho_dot` 记录通道，并将 `rho_0` 接入车辆参考曲率输入。
+- `AGV_simulate_U.slx`：真正 U 形路径验证模型，使用 100 s 仿真和 180° 半圆参考曲率。
