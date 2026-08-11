@@ -26,7 +26,7 @@ global lambda1_y lambda2_y e0_y
 % 航向误差 phi
 global kappa0_phi kappaT_phi T_phi l_kappa_phi l_s_phi eta_phi
 global lambda1_phi lambda2_phi e0_phi
-global nmt_margin rho_dot
+global nmt_margin
 
 kappa0_y = 0.28;                 % kappa_y(0)
 kappaT_y = 0.24;                 % kappa_y(T)
@@ -49,7 +49,6 @@ lambda2_phi = 0.40;
 e0_phi = 0.01;
 
 nmt_margin = 1e-10;              % 只避免浮点数把点判到端点
-rho_dot = 0;                     % assist1.m在每个导数评价点更新
 
 sizes = simsizes;
 sizes.NumContStates  = 0;
@@ -68,12 +67,13 @@ function sys = mdlOutputs(t,u)
 global kappa0_y kappaT_y T_y l_kappa_y l_s_y eta_y
 global lambda1_y lambda2_y e0_y
 global kappa0_phi kappaT_phi T_phi l_kappa_phi l_s_phi eta_phi
-global lambda1_phi lambda2_phi e0_phi nmt_margin rho_dot
+global lambda1_phi lambda2_phi e0_phi nmt_margin
 
-% Mux4输入：[e_y,de_y,rho,e_phi,de_phi,rho]
+% Mux4输入：[e_y,de_y,rho,e_phi,de_phi,rho_dot]
 e_y = u(1);
 e_phi = u(4);
-rho = max(0,0.5*(u(3)+u(6)));
+rho = max(0,u(3));
+rho_dot_now = u(6);
 
 % ------------------- kappa(t)和S(t) -------------------
 if t < T_y
@@ -139,10 +139,6 @@ B_under_phi = B_under_phi0-lambda1_phi*tanh(rho);
 B_bar_phi = B_bar_phi0+lambda2_phi*tanh(rho);
 
 % 柔性边界导数：tanh'(rho)=1-tanh(rho)^2。
-rho_dot_now = rho_dot;
-if isempty(rho_dot_now)
-    rho_dot_now = 0;
-end
 sech2_rho = 1-tanh(rho)^2;
 B_under_y_dot = B_under_y0_dot-lambda1_y*sech2_rho*rho_dot_now;
 B_bar_y_dot = B_bar_y0_dot+lambda2_y*sech2_rho*rho_dot_now;

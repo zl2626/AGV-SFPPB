@@ -132,13 +132,16 @@ S_F2 = AGV_RBF(Z_F,'F');
 S_J2 = AGV_RBF([Z_F;s2],'J');
 F2_hat = WF2'*S_F2;
 
+% 第二层 PI 的积分项求导会产生 K2*z2，这一项不能漏掉。
+F2_PI = F2_hat+K2.*z2;
+
 % 车辆输入方向，先归一化方向，再由控制增益调节幅值。
 cf = cf0*(1+cf_rate*sin(0.01*t));
 C_physical = [cf/m;lf*cf/Iz];
 C = C_physical/max(norm(C_physical),eps);
 
 % 方向盘控制量和输入饱和补偿状态
-p_a2 = 2*C2.*s2+2*F2_hat+WA2'*S_J2;
+p_a2 = 2*C2.*s2+2*F2_PI+WA2'*S_J2;
 delta = -0.5*C'*p_a2;
 delta_smooth = u_d*tanh(delta/u_d);
 dO = -O+C*(delta_smooth-delta);
@@ -201,12 +204,13 @@ s2 = z2+K2.*I2;
 S_F2 = AGV_RBF(Z_F,'F');
 S_J2 = AGV_RBF([Z_F;s2],'J');
 F2_hat = WF2'*S_F2;
+F2_PI = F2_hat+K2.*z2;
 
 % 车辆输入方向和最终控制量
 cf = cf0*(1+cf_rate*sin(0.01*t));
 C_physical = [cf/m;lf*cf/Iz];
 C = C_physical/max(norm(C_physical),eps);
-p_a2 = 2*C2.*s2+2*F2_hat+WA2'*S_J2;
+p_a2 = 2*C2.*s2+2*F2_PI+WA2'*S_J2;
 delta = -0.5*C'*p_a2;
 delta_sat = min(max(delta,-u_d),u_d);
 

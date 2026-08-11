@@ -1,7 +1,7 @@
 function S = AGV_RBF(Z,type)
 % AGV_RBF  论文中的普通Gaussian RBF基函数
 % F网络输入：Z_F=[e_y,e_phi,de_y,de_phi]
-% J网络输入：Z_J=[Z_F,z_j]
+% J网络输入：Z_J=[Z_F;s_j]，其中 s_j 是 PI 变换误差
 % 公式：S_j(Z)=exp(-(Z-c_j)'(Z-c_j)/a^2)
 
 if nargin < 2
@@ -20,7 +20,7 @@ c_F = [ ...
     -0.5, -0.2, 0, 0, 0, 0.2, 0.5;
     -0.2, -0.05, 0, 0, 0, 0.05, 0.2];
 
-% Critic/Actor的z_j中心，仍然是普通Gaussian，不做原点门控。
+% Critic/Actor 的 s_j 中心，仍然是普通 Gaussian，不做原点门控。
 c_z = [ ...
     -1.0, -0.5, -0.2, 0, 0.2, 0.5, 1.0;
     -1.0, -0.5, -0.2, 0, 0.2, 0.5, 1.0];
@@ -34,7 +34,7 @@ if upper(type) == 'F'
     scale = [1;0.1;1;0.3];
 elseif upper(type) == 'J'
     if numel(Z) ~= 6
-        error('AGV_RBF:Input','J网络输入必须是[Z_F;z_j]六维状态。');
+        error('AGV_RBF:Input','J网络输入必须是[Z_F;s_j]六维状态。');
     end
     c = [c_F;c_z];
     scale = [1;0.1;1;0.3;1;1];

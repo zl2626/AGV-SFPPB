@@ -8,7 +8,7 @@ switch flag
     case 1
         sys = mdlDerivatives(t,x,u);
     case 3
-        sys = mdlOutputs(x);
+        sys = mdlOutputs(x,u);
     case {2,4,9}
         sys = [];
     otherwise
@@ -17,7 +17,7 @@ end
 end
 
 function [sys,x0,str,ts] = mdlInitializeSizes
-global u_d p1 p2 rho_dot rho_dot_time
+global u_d p1 p2
 
 % u_d 由 AGV_ctrl.m 统一设置；直接运行 assist1 时才使用默认值。
 if isempty(u_d)
@@ -25,15 +25,13 @@ if isempty(u_d)
 end
 p1 = 5;                            % rho 衰减系数
 p2 = 0.5;                          % 饱和超限增益
-rho_dot = 0;                       % 提供给 SFPPB 边界导数
-rho_dot_time = -inf;               % 同一求解时刻只更新一次
 
 sizes = simsizes;
 sizes.NumContStates  = 1;
 sizes.NumDiscStates  = 0;
-sizes.NumOutputs     = 1;
+sizes.NumOutputs     = 2;
 sizes.NumInputs      = 1;
-sizes.DirFeedthrough = 0;
+sizes.DirFeedthrough = 1;
 sizes.NumSampleTimes = 1;
 sys = simsizes(sizes);
 x0 = 0;
@@ -41,8 +39,8 @@ str = [];
 ts = [0 0];
 end
 
-function sys = mdlDerivatives(t,x,u)
-global u_d p1 p2 rho_dot rho_dot_time
+function sys = mdlDerivatives(~,x,u)
+global u_d p1 p2
 
 rho = max(x(1),0);
 delta = u(1);
@@ -56,14 +54,21 @@ if x(1) <= 0 && d_rho < 0
     d_rho = 0;
 end
 
-% 避免代数环：同一求解时刻只把一次导数传给 SFPPB。
-if t > rho_dot_time+1e-10
-    rho_dot = d_rho;
-    rho_dot_time = t;
-end
 sys = d_rho;
 end
 
-function sys = mdlOutputs(x)
-sys = max(x(1),0);
+function sys = mdlOutputs(x,u)
+global u_d p1 p2
+
+rho = max(x(1),0);
+delta = u(1);
+varpi1 = (sign(delta-u_d)+1)*(delta-u_d);
+varpi2 = (sign(delta+u_d)-1)*(delta+u_d);
+d_rho = -p1*rho+p2*(varpi1+varpi2);
+if x(1) <= 0 && d_rho < 0
+    d_rho = 0;
+end
+
+% 输出 rho 和当前 rho_dot，供 SFPPB 直接计算柔性边界导数。
+sys = [rho;d_rho];
 end

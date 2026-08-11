@@ -24,7 +24,7 @@ out = sim('AGV_simulate','StopTime','20');
 run('AGV_plot.m');
 ```
 
-`AGV_plot.m` 按原 AGV-TFS 风格生成 13 幅图，Figure 13 是由 `rho_0` 恢复的 U 形参考轨迹和实际 AGV 轨迹。结果图保存在 `fig3`。
+`AGV_plot.m` 按原 AGV-TFS 风格生成 13 幅图，Figure 13 是由 `rho_0` 恢复的曲线路径和实际 AGV 轨迹。结果图保存在 `fig3`。
 
 ## 参数位置
 
@@ -50,6 +50,13 @@ u_d = 0.5;
 
 因此状态数为 `12*N+6`。PI 状态满足 `I1_dot=z1`、`I2_dot=z2`，并使用 `s1=z1+K1*I1`、`s2=z2+K2*I2`。
 
+第二层控制量明确使用 PI 导数项：
+
+```matlab
+F2_PI = F2_hat + K2.*z2;
+p_a2 = 2*C2.*s2 + 2*F2_PI + WA2'*S_J2;
+```
+
 ## 输入方向增益
 
 `AGV_ctrl.m` 中显式保留车辆物理输入方向，并直接归一化为控制方向：
@@ -66,33 +73,38 @@ C = C_physical/norm(C_physical);
 基准工况（`u_d=0.5`，20 s）本次结果为：
 
 ```text
-RMS(e_y)       = 0.061317 m
-RMS(e_phi)     = 0.005021 rad
-max |delta|    = 0.465310 rad
-max |sat(delta)| = 0.465310 rad
+RMS(e_y)       = 0.060814 m
+RMS(e_phi)     = 0.004978 rad
+max |delta|    = 0.464725 rad
+max |sat(delta)| = 0.464725 rad
 max |rho_0|    = 0.002000
-W(20 s)        = 3.400500
+max |rho|      = 0
+J_delta        = 3.29334
+W(20 s)        = 3.400336
 ```
 
 饱和验证工况（将 `AGV_ctrl.m` 顶部 `u_d` 临时改为 `0.3`）为：
 
 ```text
-max |delta|       = 0.465420 rad
+max |delta|       = 0.464989 rad
 max |sat(delta)|  = 0.300000 rad
-RMS(e_y)          = 0.065174 m
-RMS(e_phi)        = 0.005011 rad
-W(20 s)           = 3.400200
+RMS(e_y)          = 0.062300 m
+RMS(e_phi)        = 0.005175 rad
+W(20 s)           = 3.399705
 max |rho_0|       = 0.002000
-max flexible-bound widening > 0
+max |rho|         = 0.015386
+max flexible-bound widening = 0.007692
+J_delta           = 3.49859
+sat time          = 1.098 s
 ```
 
-饱和工况的原始仿真数据保存在 `out_sat03.mat`；默认代码已恢复为 `u_d=0.5`。
+默认代码已恢复为 `u_d=0.5`。`AGV_plot.m` 的 Figure 12 现在绘制真正的柔性辅助状态 `rho`，Figure 10 单独绘制道路曲率 `rho_0`。
 
 ## 文件结构
 
 - `AGV_ctrl.m`：PI、Identifier、Critic、Actor、O 补偿和唯一方向盘控制律。
 - `AGV_transfor.m`：SFPPB 边界、边界导数、NMT 和 `Gamma`。
-- `assist1.m`：输入饱和补偿状态 `rho`。
+- `assist1.m`：输入饱和补偿状态 `rho`，同时输出 `rho_dot` 给 SFPPB。
 - `AGV_plant.m`：AGV 横向动力学模型。
-- `AGV_plot.m`：原有时域结果图和 Figure 13 轨迹图。
-- `AGV_simulate.slx`：原模型结构，增加了 PI 诊断记录通道并将 `rho_0` 接入车辆参考曲率输入。
+- `AGV_plot.m`：时域结果图、`rho` 柔性状态图和 Figure 13 曲线路径图。
+- `AGV_simulate.slx`：原模型结构，增加了 PI 诊断记录通道、`rho/rho_dot` 记录通道，并将 `rho_0` 接入车辆参考曲率输入。
