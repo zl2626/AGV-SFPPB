@@ -18,34 +18,40 @@ end
 %% 初始化函数
 function [sys,x0,str,ts] = mdlInitializeSizes
 sizes = simsizes;
-sizes.NumContStates  = 4;   % [e_y,e_phi,de_y,de_phi]
+sizes.NumContStates  = 5;   % [e_y,e_phi,v_y,omega_z,rho_0]
 sizes.NumDiscStates  = 0;   % 0个离散状态
 sizes.NumOutputs     = 6;   % 6个输出
 sizes.NumInputs      = 2;   % 2个输入 (delta_sat, rho_0)
-sizes.DirFeedthrough = 0;   % 输出只返回状态x，不依赖当前输入u
+sizes.DirFeedthrough = 0;   % 输出只使用状态，避免车辆-控制器代数环
 sizes.NumSampleTimes = 1;   % 1个采样时间
 
 sys = simsizes(sizes);
-x0  = [-0.1; 0.01; 0; 0];       % 初始误差和误差导数
+x0  = [-0.1; 0.01; 0; 0; 0];     % 初始误差、侧向速度、横摆角速度和曲率状态
 str = [];
 ts  = [0 0];  % 连续系统
 
 %% 导数计算函数
 function sys = mdlDerivatives(t,x,u)
-% 状态解包
-e_y = x(1);    e_phi = x(2);
-de_y = x(3);   de_phi = x(4);
+global vx_vehicle
+if isempty(vx_vehicle)
+    vx_vehicle = 20;
+end
+% 状态解包：车辆状态使用侧向速度和横摆角速度。
+e_y = x(1);       e_phi = x(2);
+v_y = x(3);       omega_z = x(4);
+rho_0_state = x(5);
 
 % 输入解包：上游控制器已经完成唯一一次饱和。
 delta_sat = u(1);
 rho_0 = u(2);
+rho_0_filter_tau = 0.001;
 
 % 车辆物理参数
 m = 1832;
 Iz = 2488;
 lf = 1.18;
 lr = 1.77;
-vx = 20;
+vx = vx_vehicle;
 
 % 时变轮胎侧偏刚度
 cf_nom = 80000;
@@ -61,17 +67,19 @@ A22 = -(lf^2*cf + lr^2*cr)/(Iz*vx);
 B1 = cf/m;
 B2 = lf*cf/Iz;
 
-% 矩阵构建
-A = [0, 0, 1, 0;
-     0, 0, 0, 1;
-     0, (cf + cr)/m, A11, A12;
-     0, (-lf*cf + lr*cr)/Iz, A21, A22];
-B = [0; 0; B1; B2];
+% 误差运动学：横向误差导数包含纵向速度与航向误差耦合。
+de_y = v_y + vx*e_phi;
+de_phi = omega_z - vx*rho_0;
 
 % 扰动项。横向加速度和横摆角加速度使用各自的量纲参数。
-% 数值暂沿用原压力测试工况，后续论文实验应单独说明物理标定。
-disturbance_y_amplitude = 18;       % m/s^2
-disturbance_phi_amplitude = 18;     % rad/s^2
+% 默认值采用有量纲的物理扰动；压力测试时由命令行临时覆盖。
+global disturbance_y_amplitude disturbance_phi_amplitude
+if isempty(disturbance_y_amplitude)
+    disturbance_y_amplitude = 0.5;  % m/s^2
+end
+if isempty(disturbance_phi_amplitude)
+    disturbance_phi_amplitude = 0.1; % rad/s^2
+end
 disturbance_period = 8;
 current_phase = mod(t, disturbance_period);
 disturbance_y = 0;
@@ -87,17 +95,28 @@ D = [0;
      -((lf*cf - lr*cr)/m + vx^2)*rho_0 + disturbance_y;
      -((lf^2*cf + lr^2*cr)/Iz)*rho_0 + disturbance_phi];
 
-% 状态导数计算
-X = [e_y; e_phi; de_y; de_phi];
-dX_dt = A*X + B*delta_sat + D;
+% 侧向速度和横摆角速度的动力学。
+dv_y = A11*v_y + A12*omega_z + B1*delta_sat + D(3);
+domega_z = A21*v_y + A22*omega_z + B2*delta_sat + D(4);
 
-% 只积分同一套误差状态，避免再建立一套并行的vy、omega_z动力学。
+% 状态导数顺序仍为 [e_y,e_phi,v_y,omega_z]。
+d_rho_0_state = (rho_0-rho_0_state)/rho_0_filter_tau;
+dX_dt = [de_y; de_phi; dv_y; domega_z; d_rho_0_state];
+
+% 只积分一套车辆状态，避免再建立并行的误差/车辆动力学。
 sys = dX_dt;
 
 %% 输出函数
 function sys = mdlOutputs(~,x,~)
-% 根据同一套误差状态给出车辆可视化量。
-vx = 20;
-v_y = x(3)-vx*x(2);
+% 根据同一套状态给出误差导数和车辆可视化量。
+global vx_vehicle
+if isempty(vx_vehicle)
+    vx_vehicle = 20;
+end
+vx = vx_vehicle;
+v_y = x(3);
 omega_z = x(4);
-sys = [x;v_y;omega_z];
+rho_0_state = x(5);
+de_y = v_y + vx*x(2);
+de_phi = omega_z - vx*rho_0_state;
+sys = [x(1);x(2);de_y;de_phi;v_y;omega_z];

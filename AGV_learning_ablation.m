@@ -1,7 +1,9 @@
 % AGV_LEARNING_ABLATION  比较在线学习和冻结权重两种工况。
 % 只冻结六组NN权重，控制器结构和方向盘上限保持不变。
 
-clear global learning_on u_d
+clear global learning_on u_d c1y c2y c1phi c2phi p1 p2 tau_alpha1 ...
+    lambda1_y lambda2_y lambda1_phi lambda2_phi vx_vehicle ...
+    disturbance_y_amplitude disturbance_phi_amplitude
 global learning_on u_d
 u_d = 0.5;
 
@@ -33,7 +35,9 @@ end
 learning_on = true;
 set_param('AGV_simulate','SaveState','off');
 close_system('AGV_simulate',0);
-clear global learning_on u_d
+clear global learning_on u_d c1y c2y c1phi c2phi p1 p2 tau_alpha1 ...
+    lambda1_y lambda2_y lambda1_phi lambda2_phi vx_vehicle ...
+    disturbance_y_amplitude disturbance_phi_amplitude
 
 function metrics = getMetrics(out)
 t = out.t(:);

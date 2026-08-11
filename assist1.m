@@ -25,9 +25,15 @@ global u_d p1 p2 rho_filter_tau
 if isempty(u_d)
     u_d = 0.5;
 end
-p1 = 5;                            % rho 衰减系数
-p2 = 0.5;                          % 饱和超限增益
-rho_filter_tau = 0.02;             % rho_dot 滤波时间常数(s)
+if isempty(p1)
+    p1 = 2;                         % rho 衰减系数
+end
+if isempty(p2)
+    p2 = 5;                         % 饱和超限增益
+end
+if isempty(rho_filter_tau)
+    rho_filter_tau = 0.02;          % rho_dot 滤波时间常数(s)
+end
 
 sizes = simsizes;
 sizes.NumContStates  = 2;

@@ -50,9 +50,14 @@ elseif isempty(t_rho)
 end
 
 % 方向盘饱和上限，与 AGV_ctrl.m 保持一致。
-% 做 u_d=0.3 饱和试验时，在运行本脚本前设置 u_d_plot=0.3。
+% 如果命令行已经设置 global u_d，就直接使用它；也可用 u_d_plot 覆盖。
 if ~exist('u_d_plot','var')
-    u_d_plot = 0.5;
+    global u_d
+    if isempty(u_d)
+        u_d_plot = 0.5;
+    else
+        u_d_plot = u_d;
+    end
 end
 u_d = u_d_plot;
 
@@ -230,7 +235,12 @@ ylabel('Relative boundary widening','FontSize',14);
 grid on; xlim([0,simulation_time]);
 
 % Figure 13：由 rho_0 恢复的曲线路径与实际 AGV 轨迹。
-vx = 20;                                      % AGV_plant.m 中的纵向速度
+global vx_vehicle
+if isempty(vx_vehicle)
+    vx = 20;
+else
+    vx = vx_vehicle;
+end
 rho_ref = interp1(t_rho, rho_0_data, t, 'previous', 'extrap');
 psi_r = cumtrapz(t, vx*rho_ref);
 X_r = cumtrapz(t, vx*cos(psi_r));

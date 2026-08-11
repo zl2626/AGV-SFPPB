@@ -25,19 +25,32 @@ N = 7;
 
 % PI 参数：s1=z1+K1*I1，s2=z2+K2*I2
 global k1y k1phi k2y k2phi
-global tau_alpha1
+global tau_alpha1 vx_vehicle
 k1y = 0.10;                         % 第一层横向误差积分系数
 k1phi = 0.20;                       % 第一层航向误差积分系数
 k2y = 0.01;                         % 第二层横向误差积分系数
 k2phi = 0.01;                       % 第二层航向误差积分系数
-tau_alpha1 = 0.02;                  % 虚拟控制一阶滤波时间常数(s)
+if isempty(tau_alpha1)
+    tau_alpha1 = 0.01;              % 虚拟控制一阶滤波时间常数(s)
+end
+if isempty(vx_vehicle)
+    vx_vehicle = 20;                % 纵向速度(m/s)
+end
 
 % 两层控制器参数
 global c1y c1phi c2y c2phi
-c1y = 2;                            % 第一层横向稳定系数
-c1phi = 22;                         % 第一层航向稳定系数
-c2y = 2;                            % 第二层横向稳定系数
-c2phi = 5;                          % 第二层航向稳定系数
+if isempty(c1y)
+    c1y = 5;                        % 第一层横向稳定系数
+end
+if isempty(c1phi)
+    c1phi = 35;                      % 第一层航向稳定系数
+end
+if isempty(c2y)
+    c2y = 5;                        % 第二层横向稳定系数
+end
+if isempty(c2phi)
+    c2phi = 8;                       % 第二层航向稳定系数
+end
 
 % RBF 自适应参数
 global Upsilon1 Upsilon2 sigma1 sigma2
@@ -56,13 +69,14 @@ if isempty(learning_on)
 end
 
 % 车辆和方向盘参数
-global u_d m Iz lf cf0 cf_rate r_delta
+global u_d m Iz lf lr cf0 cf_rate r_delta
 if isempty(u_d)
     u_d = 0.5;                       % 方向盘最大输入（唯一来源）
 end
 m = 1832;                           % 车辆质量
 Iz = 2488;                          % 横摆转动惯量
 lf = 1.18;                          % 前轴到质心距离
+lr = 1.77;                          % 后轴到质心距离
 cf0 = 80000;                        % 初始前轮侧偏刚度
 cf_rate = 0.10;                     % 侧偏刚度变化幅度
 r_delta = norm([cf0/m;lf*cf0/Iz]);   % HJB转向输入代价权重
@@ -103,7 +117,7 @@ global k1y k1phi k2y k2phi
 global tau_alpha1
 global Upsilon1 Upsilon2 sigma1 sigma2
 global gamma_c1 gamma_c2 gamma_a1 gamma_a2 learning_on
-global u_d m Iz lf cf0 cf_rate r_delta
+global u_d m Iz lf lr cf0 cf_rate r_delta
 
 % ------------------------- 解包状态 --------------------------
 i = 0;
@@ -124,6 +138,7 @@ z1 = [u(2);u(3)];
 chi2 = [u(9);u(10)];
 Gamma = [u(11);u(12)];
 Z_F = [u(7);u(8);u(9);u(10)];
+rho_0 = u(13);
 
 C1 = [c1y;c1phi];
 C2 = [c2y;c2phi];
@@ -160,7 +175,9 @@ C = C_physical;
 
 % 方向盘控制量和输入饱和补偿状态
 p_a2 = 2*C2.*s2+2*F2_PI+WA2'*S_J2;
-delta = -(C'*p_a2)/(2*r_delta);
+delta_feedback = -(C'*p_a2)/(2*r_delta);
+delta_feedforward = 5.2*rho_0;    % 车辆模型的曲率前馈系数
+delta = delta_feedback+delta_feedforward;
 delta_smooth = u_d*tanh(delta/u_d);
 dO = -O+C*(delta_smooth-delta);
 
@@ -194,7 +211,7 @@ function sys = mdlOutputs(t,x,u)
 global N c1y c1phi c2y c2phi
 global k1y k1phi k2y k2phi
 global tau_alpha1
-global u_d m Iz lf cf0 cf_rate r_delta
+global u_d m Iz lf lr cf0 cf_rate r_delta
 
 % ------------------------- 解包状态 --------------------------
 i = 0;
@@ -215,6 +232,7 @@ z1 = [u(2);u(3)];
 chi2 = [u(9);u(10)];
 Gamma = [u(11);u(12)];
 Z_F = [u(7);u(8);u(9);u(10)];
+rho_0 = u(13);
 
 C1 = [c1y;c1phi];
 C2 = [c2y;c2phi];
@@ -243,7 +261,9 @@ cf = cf0*(1+cf_rate*sin(0.01*t));
 C_physical = [cf/m;lf*cf/Iz];
 C = C_physical;
 p_a2 = 2*C2.*s2+2*F2_PI+WA2'*S_J2;
-delta = -(C'*p_a2)/(2*r_delta);
+delta_feedback = -(C'*p_a2)/(2*r_delta);
+delta_feedforward = 5.2*rho_0;    % 车辆模型的曲率前馈系数
+delta = delta_feedback+delta_feedforward;
 delta_sat = min(max(delta,-u_d),u_d);
 
 W = norm([WF1(:);WC1(:);WA1(:);WF2(:);WC2(:);WA2(:)]);

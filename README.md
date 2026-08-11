@@ -43,9 +43,9 @@ out = sim('AGV_simulate_U','ReturnWorkspaceOutputs','on');
 run('AGV_plot.m');
 ```
 
-U 形工况使用 `v_x=20 m/s`、`rho_0=0.002`，在 `10~88.54 s` 保持曲率，航向变化约为
-`20*0.002*(88.54-10)=pi`，因此是完整的 180° 半圆掉头；总仿真时间为 100 s。对应结果图命名为
-`fig3/sfppb_pi_u_01~13`。之所以采用较长的半圆时间，是为了保持当前 SFPPB 边界和控制器不变；在 20 s 内直接使用 `rho_0=0.02` 会造成边界越界。
+U 形工况使用 `v_x=20 m/s`、`rho_0=0.003 1/m`，在 `10~62.36 s` 保持曲率，航向变化约为
+`20*0.003*(62.36-10)=pi`，因此是完整的 180° 半圆掉头；总仿真时间为 70 s。对应结果图命名为
+`fig3/sfppb_pi_u_01~13`。这组曲率对应半径约 333 m，既能形成清楚的 U 形，又不会产生瞬时大转向。
 
 ## 参数位置
 
@@ -54,8 +54,8 @@ U 形工况使用 `v_x=20 m/s`、`rho_0=0.002`，在 `10~88.54 s` 保持曲率�
 ```matlab
 k1y = 0.10;   k1phi = 0.20;
 k2y = 0.01;   k2phi = 0.01;
-c1y = 2;      c1phi = 22;
-c2y = 2;      c2phi = 5;
+c1y = 5;      c1phi = 35;
+c2y = 5;      c2phi = 8;
 Upsilon1 = 0.04;  Upsilon2 = 0.04;
 sigma1 = 0.08;    sigma2 = 0.08;
 gamma_c1 = 0.004; gamma_c2 = 0.004;
@@ -63,6 +63,9 @@ gamma_a1 = 0.012; gamma_a2 = 0.012;
 learning_on = true;              % false时冻结六组NN权重
 u_d = 0.5;
 ```
+
+`AGV_plant.m` 顶部还给出 `vx_vehicle` 和默认扰动幅值：横向加速度为
+`0.5 m/s^2`，横摆角加速度为 `0.1 rad/s^2`。压力测试时再在命令行临时覆盖，不改默认物理工况。
 
 控制器连续状态顺序为
 
@@ -90,6 +93,9 @@ r_delta = norm([cf0/m; lf*cf0/Iz]);
 delta = -(C'*p_a2)/(2*r_delta);
 ```
 
+曲线路径的第 13 路输入是 `rho_0`，控制器增加简单的车辆曲率前馈
+`delta_feedforward = 5.2*rho_0`；直线路径时该项为零。
+
 控制器输出 `delta` 和唯一一次饱和后的 `delta_sat`，Simulink 将 `delta_sat` 送入 plant，plant 不再重复设置第二个饱和上限。
 
 `assist1.m` 的 `rho_dot` 使用连续滤波状态输出，当前模型代数环诊断为 0 个环。
@@ -98,35 +104,38 @@ delta = -(C'*p_a2)/(2*r_delta);
 
 ## 结果
 
-基准工况（`u_d=0.5`，20 s）本次结果为：
+基准工况（`u_d=0.5`，20 s，默认物理扰动）本次结果为：
 
 ```text
-RMS(e_y)       = 0.045594 m
-RMS(e_phi)     = 0.004212 rad
-max |delta|    = 0.503737 rad
-max |sat(delta)| = 0.500000 rad
-max |rho_0|    = 0.002000
-max |rho|      = 2.05e-08
-RMS_delta_dot  = 1.26288 rad/s
-TV_delta       = 7.28518 rad
-W(20 s)        = 3.38360
+RMS(e_y)       = 0.0205843 m
+RMS(e_phi)     = 0.00184732 rad
+max |delta|    = 0.264762 rad
+RMS_delta_dot  = 0.0281441 rad/s
+TV_delta       = 0.153974 rad
+T_sat          = 0 s
 ```
 
 饱和验证工况可在 MATLAB 中设置唯一的 `u_d`：
 
 ```matlab
-global u_d; u_d = 0.3;
+global u_d disturbance_y_amplitude disturbance_phi_amplitude
+u_d = 0.3;
+disturbance_y_amplitude = 18;
+disturbance_phi_amplitude = 18;
 out = sim('AGV_simulate','StopTime','20','ReturnWorkspaceOutputs','on');
 ```
 
 恢复默认工况时执行 `clear global u_d` 后重新运行。
 
-当前结构修订后，`u_d=0.3` 会在约 `t=7.32 s` 触发 `phi` 性能边界越界，因此旧的 `sat03` 图片不再作为本版本结果；需要在物理输入增益统一后重新完成控制器预调参。
+这是单独的压力测试背景：两个扰动数值虽然都写成 18，但在代码中分别对应 `m/s^2` 和 `rad/s^2`，默认工况不会使用它们。
+当前 `u_d=0.3` 压力测试完整通过，饱和持续约 `1.44 s`，结果图为 `fig3/sfppb_pi_sat03_01~13`。
 
 ```text
-结果状态          = BoundaryViolation（phi）
-首次越界时间      ≈ 7.32 s
+结果状态          = Pass（无 BoundaryViolation）
+T_sat             ≈ 1.44 s
 ```
+
+U 形工况的记录结果为 `RMS(e_y)=0.03517 m`、`RMS(e_phi)=0.003107 rad`，全程无饱和、无边界越界；Figure 13 中红色虚线是参考半圆，蓝色实线是实际 AGV 轨迹。
 
 默认代码已恢复为 `u_d=0.5`。`AGV_plot.m` 的 Figure 12 现在绘制真正的柔性辅助状态 `rho`，Figure 10 单独绘制道路曲率 `rho_0`。
 
@@ -135,12 +144,12 @@ out = sim('AGV_simulate','StopTime','20','ReturnWorkspaceOutputs','on');
 - `AGV_ctrl.m`：PI、Identifier、Critic、Actor、O 补偿和唯一方向盘控制律。
 - `AGV_transfor.m`：SFPPB 边界、边界导数、NMT 和 `Gamma`。
 - `assist1.m`：输入饱和补偿状态 `rho`，同时输出经过连续滤波的 `rho_dot` 给 SFPPB。
-- `AGV_plant.m`：AGV 横向动力学模型，输入为已经饱和的 `delta_sat`。
+- `AGV_plant.m`：标准 `[e_y,e_phi,v_y,omega_z]` 横向动力学模型，输入为已经饱和的 `delta_sat`，并用一阶曲率状态避免代数环。
 - `AGV_plot.m`：时域结果图、`rho` 柔性状态图和 Figure 13 曲线路径图。
 - `AGV_learning_ablation.m`：learning ON/OFF 消融和六组权重范数诊断。
 - `AGV_simulate.slx`：原模型结构，增加了 PI 诊断记录通道、`rho/rho_dot` 记录通道，并将 `rho_0` 接入车辆参考曲率输入。
-- `AGV_simulate_U.slx`：真正 U 形路径验证模型，使用 100 s 仿真和 180° 半圆参考曲率。
+- `AGV_simulate_U.slx`：真正 U 形路径验证模型，使用 70 s 仿真和 180° 半圆参考曲率。
 
 ## 当前验证边界
 
-本轮先完成物理输入、plant 接口、代数环和诊断结构对齐，没有把参数调到“看起来更好”。第一层 `WF1` 的理论未知项定义、扰动的物理标定以及新的合理 U-turn 工况仍需单独推导和验证；因此旧的 `sat03`、`u` 图不能被解释为本轮修订后的有效实验。
+本轮已完成物理输入、plant 接口、代数环、曲率前馈和诊断结构对齐；名义、压力饱和和 U 形三种仿真均无边界越界。第一层 `WF1` 的理论未知项定义仍需在论文中进一步说明，不能自动解释成严格已知的 `F1`。

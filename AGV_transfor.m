@@ -34,8 +34,8 @@ T_y = 5;
 l_kappa_y = 1;
 l_s_y = 1;
 eta_y = 1;
-lambda1_y = 0.50;
-lambda2_y = 0.50;
+if isempty(lambda1_y), lambda1_y = 1.00; end
+if isempty(lambda2_y), lambda2_y = 1.00; end
 
 kappa0_phi = 0.10;               % kappa_phi(0)
 kappaT_phi = 0.08;               % kappa_phi(T)
@@ -43,8 +43,8 @@ T_phi = 5;
 l_kappa_phi = 1;
 l_s_phi = 1;
 eta_phi = 1;
-lambda1_phi = 0.40;
-lambda2_phi = 0.40;
+if isempty(lambda1_phi), lambda1_phi = 0.80; end
+if isempty(lambda2_phi), lambda2_phi = 0.80; end
 
 nmt_margin = 1e-10;              % 只避免浮点数把点判到端点
 
