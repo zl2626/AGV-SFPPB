@@ -1,6 +1,6 @@
 function [sys,x0,str,ts] = AGV_ctrl(t,x,u,flag)
 % AGV_CTRL  SFPPB-ICAS-RL控制器
-% 第一层：z1 -> alpha1
+% 第一层：z1 -> alpha1，显式补入SFPPB边界变化项Gamma
 % 第二层：z2=chi2-alpha1-O -> delta
 % O是论文中的输入饱和补偿状态，不是Safety Filter或残差控制器。
 % 只有一个实际方向盘delta。
@@ -27,8 +27,8 @@ global learning_enabled u_d m Iz lf cf0 cf_rate
 
 % 论文控制参数
 N = 7;                           % RBF节点数
-c1 = 2;                          % 第一层稳定项
-c2 = 2;                          % 第二层稳定项
+c1 = [2;22];                     % 第一层稳定项[c1y,c1phi]
+c2 = [2;5];                      % 第二层稳定项[c2y,c2phi]
 Upsilon1 = 0.04;                 % 第一层Identifier增益
 Upsilon2 = 0.04;                 % 第二层Identifier增益
 sigma1 = 0.08;                   % 第一层Identifier sigma
@@ -62,7 +62,16 @@ sys = simsizes(sizes);
 
 % 状态顺序：[WF1;WC1;WA1;WF2;WC2;WA2;O]
 % 六组权重都是N×2，O=[O_y,O_phi]。
-x0 = zeros(12*N+2,1);
+W0 = 0.4;                       % 论文仿真的非零权重幅值
+w0 = W0*[-1;-1;-1;0;1;1;1];    % 对称中心的确定性初值
+WF10 = repmat(w0,1,2);
+WC10 = repmat(w0,1,2);
+WA10 = repmat(w0,1,2);
+WF20 = repmat(w0,1,2);
+WC20 = repmat(w0,1,2);
+WA20 = repmat(w0,1,2);
+O0 = zeros(2,1);
+x0 = [WF10(:);WC10(:);WA10(:);WF20(:);WC20(:);WA20(:);O0];
 str = [];
 ts = [0 0];
 end
@@ -73,15 +82,16 @@ global gamma_c1 gamma_c2 gamma_a1 gamma_a2 learning_enabled
 global u_d m Iz lf cf0 cf_rate
 
 [WF1,WC1,WA1,WF2,WC2,WA2,O] = unpackStates(x,N);
-[varsigma,z1,chi2,Z_F] = readInputs(u);
+[varsigma,z1,chi2,Gamma,Z_F] = readInputs(u);
 
 % ------------------------- 第一层RL -------------------------
 S_F1 = AGV_RBF(Z_F,'F');
 S_J1 = AGV_RBF([Z_F;z1],'J');
 F1_hat = WF1'*S_F1;
 
-% alpha1 = A^(-1)[-c1*z1-F1_hat-(1/2)Wa1'*S_J1]
-alpha1 = varsigma\(-c1*z1-F1_hat-0.5*WA1'*S_J1);
+% z1_dot = varsigma*chi2-Gamma+F1+...
+% alpha1 = varsigma^(-1)[-c1*z1+Gamma-F1_hat-(1/2)Wa1'*S_J1]
+alpha1 = varsigma\(-c1.*z1+Gamma-F1_hat-0.5*WA1'*S_J1);
 
 % ------------------------- 第二层RL -------------------------
 z2 = chi2-alpha1-O;
@@ -91,16 +101,17 @@ F2_hat = WF2'*S_F2;
 
 cf = cf0*(1+cf_rate*sin(0.01*t));
 C = [cf/m;lf*cf/Iz];
+C = C/max(norm(C),eps);          % 归一化输入方向，保留物理方向
 
 % 向量化AGV方向盘公式：
 % p_a2=2*c2*z2+2*F2_hat+Wa2'*S_J2
 % delta=-(1/2)C'*p_a2
-p_a2 = 2*c2*z2+2*F2_hat+WA2'*S_J2;
+p_a2 = 2*c2.*z2+2*F2_hat+WA2'*S_J2;
 delta = -0.5*C'*p_a2;
-delta1 = min(max(delta,-u_d),u_d);
 
-% 论文输入饱和补偿：O_dot=-O+C[k(delta)-delta]
-dO = -O+C*(delta1-delta);
+% 论文输入饱和补偿：k(delta)=u_d*tanh(delta/u_d)
+delta_smooth = u_d*tanh(delta/u_d);
+dO = -O+C*(delta_smooth-delta);
 
 if learning_enabled
     % ----------------------- Identifier -----------------------
@@ -112,8 +123,10 @@ if learning_enabled
     dWC2 = -gamma_c2*(S_J2*S_J2')*WC2;
 
     % --------------------------- Actor -------------------------
-    dWA1 = (S_J1*S_J1')*(gamma_a1*(WA1-WC1)+gamma_c1*WC1);
-    dWA2 = (S_J2*S_J2')*(gamma_a2*(WA2-WC2)+gamma_c2*WC2);
+    dWA1 = -(S_J1*S_J1')* ...
+        (gamma_a1*(WA1-WC1)+gamma_c1*WC1);
+    dWA2 = -(S_J2*S_J2')* ...
+        (gamma_a2*(WA2-WC2)+gamma_c2*WC2);
 else
     dWF1 = zeros(size(WF1));
     dWC1 = zeros(size(WC1));
@@ -130,13 +143,13 @@ function sys = mdlOutputs(t,x,u)
 global N c1 c2 u_d m Iz lf cf0 cf_rate
 
 [WF1,WC1,WA1,WF2,WC2,WA2,O] = unpackStates(x,N);
-[varsigma,z1,chi2,Z_F] = readInputs(u);
+[varsigma,z1,chi2,Gamma,Z_F] = readInputs(u);
 
 % 第一层Actor和Identifier
 S_F1 = AGV_RBF(Z_F,'F');
 S_J1 = AGV_RBF([Z_F;z1],'J');
 F1_hat = WF1'*S_F1;
-alpha1 = varsigma\(-c1*z1-F1_hat-0.5*WA1'*S_J1);
+alpha1 = varsigma\(-c1.*z1+Gamma-F1_hat-0.5*WA1'*S_J1);
 
 % 第二层唯一方向盘控制
 z2 = chi2-alpha1-O;
@@ -145,7 +158,8 @@ S_J2 = AGV_RBF([Z_F;z2],'J');
 F2_hat = WF2'*S_F2;
 cf = cf0*(1+cf_rate*sin(0.01*t));
 C = [cf/m;lf*cf/Iz];
-p_a2 = 2*c2*z2+2*F2_hat+WA2'*S_J2;
+C = C/max(norm(C),eps);
+p_a2 = 2*c2.*z2+2*F2_hat+WA2'*S_J2;
 delta = -0.5*C'*p_a2;
 delta1 = min(max(delta,-u_d),u_d);
 
@@ -164,11 +178,12 @@ WA2 = reshape(x(i+1:i+2*N),N,2); i = i+2*N;
 O = x(i+1:i+2);
 end
 
-function [varsigma,z1,chi2,Z_F] = readInputs(u)
+function [varsigma,z1,chi2,Gamma,Z_F] = readInputs(u)
 % Mux1输入：[varsigma_y,z1_y,z1_phi,varsigma_phi,0,0,
-%           e_y,e_phi,de_y,de_phi,0,0,rho]
+%           e_y,e_phi,de_y,de_phi,Gamma_y,Gamma_phi,rho]
 varsigma = diag([max(u(1),eps),max(u(4),eps)]);
 z1 = [u(2);u(3)];
 chi2 = [u(9);u(10)];
+Gamma = [u(11);u(12)];
 Z_F = [u(7);u(8);u(9);u(10)];
 end
